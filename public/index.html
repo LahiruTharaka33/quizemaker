@@ -7,14 +7,54 @@
   <title>QuizLock</title>
   <link rel="stylesheet" href="/css/style.css">
   <style>
-    .hero { text-align: center; padding: 40px 8px 24px; }
+    .hero { text-align: center; padding: 28px 8px 24px; }
     .hero .logo { width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 16px; display: grid; place-items: center; background: var(--primary); color: #fff; font-size: 32px; }
     .code-input { text-transform: uppercase; letter-spacing: .3em; text-align: center; font-size: 1.4rem !important; font-weight: 700; }
     .role { display: flex; gap: 14px; align-items: flex-start; }
     .role .ic { font-size: 28px; }
+
+    /* hamburger */
+    .burger { width: 44px; height: 44px; border-radius: 11px; border: 1px solid transparent; background: transparent; color: var(--text); display: grid; place-items: center; cursor: pointer; }
+    .burger:hover { background: var(--surface-2); }
+    .burger svg { width: 24px; height: 24px; }
+
+    /* slide-in menu */
+    .drawer-bg { position: fixed; inset: 0; z-index: 60; background: rgba(10, 12, 30, .45); opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 61; width: min(300px, 84vw); background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow); transform: translateX(100%); transition: transform .22s ease-out; display: flex; flex-direction: column; padding: calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom)); }
+    body.menu-open .drawer-bg { opacity: 1; pointer-events: auto; }
+    body.menu-open .drawer { transform: none; }
+    body.menu-open { overflow: hidden; }
+    .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .drawer-label { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 8px 6px; }
+    .menu-link { display: flex; align-items: center; gap: 12px; padding: 12px 10px; border-radius: 12px; text-decoration: none; color: var(--text); font-weight: 600; }
+    .menu-link:hover, .menu-link:focus-visible { background: var(--surface-2); outline: none; }
+    .menu-link .ic { width: 36px; height: 36px; border-radius: 10px; background: var(--primary-soft); display: grid; place-items: center; font-size: 18px; flex: none; }
+    .menu-link small { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; }
+    @media (prefers-reduced-motion: reduce) { .drawer, .drawer-bg { transition: none; } }
   </style>
 </head>
 <body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="logo">🔒</span> QuizLock</a>
+    <span class="spacer"></span>
+    <button class="burger" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </header>
+
+  <div class="drawer-bg" id="menuBg"></div>
+  <nav class="drawer" id="menu" aria-label="Menu" aria-hidden="true">
+    <div class="drawer-head">
+      <b>Menu</b>
+      <button class="burger" id="menuClose" aria-label="Close menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="drawer-label">For lecturers</div>
+    <a class="menu-link" href="/lecturer"><span class="ic">🧑‍🏫</span><span>Lecturer login<small>Manage quizzes and watch students live</small></span></a>
+    <a class="menu-link" href="/lecturer#/register"><span class="ic">✨</span><span>Create lecturer account<small>New here? Sign up</small></span></a>
+  </nav>
+
   <div class="wrap">
     <div class="hero">
       <div class="logo">🔒</div>
@@ -24,21 +64,34 @@
 
     <form class="card" id="joinForm">
       <div class="role"><div class="ic">🎓</div><div><h2>Join a quiz</h2><p class="muted small">Enter the 6-character code from your lecturer, or just open the link they shared.</p></div></div>
-      <label class="field"><input class="code-input" id="code" type="text" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="ABC123" required></label>
+      <label class="field"><input class="code-input" id="code" type="text" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="ABC123" aria-label="Quiz code" required></label>
       <button class="btn primary block" type="submit">Join</button>
     </form>
-
-    <div class="card">
-      <div class="role"><div class="ic">🧑‍🏫</div><div><h2>I'm a lecturer</h2><p class="muted small">Create quizzes, share a link, watch students live and unlock frozen attempts.</p></div></div>
-      <a class="btn block" href="/lecturer">Open lecturer dashboard</a>
-    </div>
   </div>
+
   <script>
     document.getElementById('joinForm').addEventListener('submit', (e) => {
       e.preventDefault();
       const c = document.getElementById('code').value.trim().toUpperCase();
       if (c) location.href = '/q/' + encodeURIComponent(c);
     });
+
+    // hamburger menu
+    const btn = document.getElementById('menuBtn');
+    const menu = document.getElementById('menu');
+    function setMenu(open) {
+      document.body.classList.toggle('menu-open', open);
+      btn.setAttribute('aria-expanded', String(open));
+      menu.setAttribute('aria-hidden', String(!open));
+      menu.inert = !open;
+      if (open) menu.querySelector('.menu-link').focus();
+      else btn.focus({ preventScroll: true });
+    }
+    menu.inert = true;
+    btn.addEventListener('click', () => setMenu(true));
+    document.getElementById('menuClose').addEventListener('click', () => setMenu(false));
+    document.getElementById('menuBg').addEventListener('click', () => setMenu(false));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('menu-open')) setMenu(false); });
   </script>
 </body>
 </html>

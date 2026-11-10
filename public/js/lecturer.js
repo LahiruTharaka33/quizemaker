@@ -19,7 +19,8 @@ function route() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   window.scrollTo(0, 0);
   if (parts[0] === 'reset' && parts[1]) return renderReset(parts[1]);
-  if (!me) return renderAuth();
+  if (!me) return renderAuth(parts[0] === 'register' ? 'register' : 'login');
+  if (parts[0] === 'register') { history.replaceState(null, '', '#/'); return renderList(); }
   if (parts[0] === 'new') return renderBuilder(null);
   if (parts[0] === 'edit' && parts[1]) return renderBuilder(parts[1]);
   if (parts[0] === 'quiz' && parts[1]) return renderMonitor(parts[1]);
