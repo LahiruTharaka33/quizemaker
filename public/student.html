@@ -47,6 +47,7 @@
     .overlay { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; }
     .overlay.frozen { background: #2a0d14; color: #ffe5e8; }
     .overlay.resume { background: var(--bg); }
+    .overlay.paused { background: #10183a; color: #e6ebff; }
     .overlay .ic { font-size: 64px; margin-bottom: 12px; }
     .overlay h1 { font-size: 1.7rem; }
     .overlay p { max-width: 380px; opacity: .9; }
@@ -112,6 +113,16 @@
     <div class="reason" id="oReason"></div>
     <p>You left the quiz screen. Your answers are saved, but you can't continue until your lecturer unlocks your quiz.</p>
     <p class="small">Stay on this screen and ask your lecturer.</p>
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Paused by the lecturer -->
+  <div id="oPaused" class="overlay paused hidden">
+    <div class="ic">⏸</div>
+    <h1>Quiz paused</h1>
+    <p>Your lecturer paused the quiz for everyone. Your answers are saved and your time is stopped.</p>
+    <p class="small" id="oPausedTime"></p>
+    <p class="small">Stay on this page. It continues automatically when your lecturer resumes.</p>
     <div class="spinner"></div>
   </div>
 

@@ -78,21 +78,28 @@ Notes:
 1. **New quiz**: add a title, instructions and a time limit, then multiple-choice questions with points. Tap the circle to mark the correct answer.
 2. Settings: shuffle questions, shuffle answers, lock to full screen, show score after submitting.
 3. **Save** it. Saved quizzes stay under **My quizzes** for later use, and you can edit or duplicate them any time.
-4. Whenever you want to run it (today, next week, for several groups), press **▶ Start**. Each start creates a **session** with:
-   - its own join code, link and QR code
-   - its own students and results (the same student ID can take a new session)
-   - an optional name, e.g. "Group A"
-   - a copy of the questions as they were at start, so later edits never change a running or past session
+4. Whenever you want to run it (today, next week, for several groups), press **▶ Run**. This opens a **session** in a **waiting room**:
+   - it gets its own join code, link and QR code
+   - students join and see "You're in, waiting for your lecturer". Nobody sees the questions and no timer runs yet.
+   - press **▶ Start quiz** (it shows how many are waiting), and everyone begins at the same moment. Students who join later start straight away.
+   - it keeps its own students and results (the same student ID can take a new session)
+   - you can give it an optional name, e.g. "Group A"
+   - it holds a copy of the questions as they were when opened, so later edits never change a running or past session
 
-   **▶ Save & start** does both in one step.
-5. The quiz page lists **Live now** and **Past sessions** with dates, student counts and average score. Tap one to open it.
-6. The live monitor shows every student: writing / 🔒 frozen / submitted, progress, violations, timer and score. You get a toast, a beep and a vibration when someone freezes.
-7. For a frozen student:
+   **▶ Save & start** saves and opens the waiting room in one step.
+5. **⏸ Pause / ▶ Resume** at any time:
+   - Pausing hides the questions and stops every student's timer.
+   - Leaving the app while paused doesn't freeze anyone.
+   - Resume continues with exactly the time each student had left, and their answers kept.
+6. **Big QR for the projector:** tap the QR, or **⛶ Open QR in new tab**. The page `/present/CODE` shows a large QR code, the code and the link, plus a live **"N joined"** count and the session status. Press **F** for full screen.
+7. The quiz page lists **Open now** (waiting, live or paused) and **Past sessions** with dates, student counts and average score. Tap one to open it. An ended session has **↺ Reopen** (back to the waiting room, same code) and **↻ Run again** (a new session).
+8. The live monitor shows every student: waiting / writing / 🔒 frozen / submitted, progress, violations, timer and score. You get a toast, a beep and a vibration when someone freezes.
+9. For a frozen student:
    - **Continue**: they resume where they left off, and their answers are kept.
    - **Restart / options**: continue or start from the beginning, with optional *shuffle questions* and *shuffle answers*.
-8. ⋯ menu: activity log, force submit, remove a student (they can then rejoin).
-9. **End session** auto-submits everyone still writing or frozen, and the quiz stays saved for next time. **Reopen** lets the same code work again. **Results CSV** exports that session's marks.
-10. Log in on your phone to monitor and unlock students from there.
+10. ⋯ menu: activity log, force submit, remove a student (they can then rejoin).
+11. **End session** auto-submits everyone still writing, frozen or paused, and the quiz stays saved for next time. **Results CSV** exports that session's marks.
+12. Log in on your phone to monitor and unlock students from there.
 
 **Reviewing answers** (in any live or past session)
 - **👥 Students:** tap a student (or **📝 Answers**) to see their sheet:

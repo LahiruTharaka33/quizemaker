@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f46e5">
+  <title>Join the quiz · QuizLock</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    html, body { height: 100%; }
+    body { display: flex; flex-direction: column; }
+    .stage { flex: 1; display: grid; grid-template-columns: auto 1fr; gap: clamp(20px, 5vw, 80px); align-items: center; justify-content: center; padding: clamp(16px, 4vw, 56px); max-width: 1600px; margin: 0 auto; width: 100%; }
+    @media (orientation: portrait), (max-width: 760px) { .stage { grid-template-columns: 1fr; text-align: center; justify-items: center; } }
+    .qr-box { background: #fff; border-radius: clamp(16px, 2vw, 28px); padding: clamp(12px, 1.6vw, 24px); box-shadow: var(--shadow); line-height: 0; }
+    .qr-box img { width: min(72vh, 46vw); height: min(72vh, 46vw); image-rendering: pixelated; }
+    @media (orientation: portrait), (max-width: 760px) { .qr-box img { width: min(80vw, 56vh); height: min(80vw, 56vh); } }
+    .info { min-width: 0; }
+    .title { font-size: clamp(1.3rem, 3vw, 2.6rem); font-weight: 800; margin: 0 0 clamp(10px, 2vh, 24px); overflow-wrap: anywhere; }
+    .lbl { color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; font-size: clamp(.8rem, 1.2vw, 1.05rem); }
+    .url { font-size: clamp(1.1rem, 2.6vw, 2.2rem); font-weight: 700; overflow-wrap: anywhere; margin: 4px 0 clamp(14px, 3vh, 32px); color: var(--primary); }
+    .code { font-size: clamp(3rem, 9vw, 8.5rem); font-weight: 900; letter-spacing: .12em; line-height: 1; margin: 6px 0 clamp(14px, 3vh, 32px); font-variant-numeric: tabular-nums; }
+    .live { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+    @media (orientation: portrait), (max-width: 760px) { .live { justify-content: center; } }
+    .pill { display: inline-flex; align-items: center; gap: 10px; padding: 10px 20px; border-radius: 99px; font-weight: 800; font-size: clamp(1rem, 1.8vw, 1.5rem); background: var(--surface-2); }
+    .pill.waiting { background: var(--warn-soft); color: var(--warn); }
+    .pill.open { background: var(--ok-soft); color: var(--ok); }
+    .pill.paused { background: var(--primary-soft); color: var(--primary); }
+    .pill.closed { background: var(--danger-soft); color: var(--danger); }
+    .count b { font-size: 1.3em; }
+    .tools { position: fixed; top: 12px; right: 12px; display: flex; gap: 8px; }
+    .err { margin: auto; text-align: center; padding: 24px; }
+  </style>
+</head>
+<body>
+  <div class="tools">
+    <button class="btn sm" id="fs" title="Full screen (F)">⛶ Full screen</button>
+  </div>
+  <main class="stage" id="stage">
+    <div class="qr-box"><img id="qr" alt="QR code to join the quiz"></div>
+    <div class="info">
+      <h1 class="title" id="title">Loading…</h1>
+      <div class="lbl">Scan the QR code or open</div>
+      <div class="url" id="url"></div>
+      <div class="lbl">and enter the code</div>
+      <div class="code" id="code"></div>
+      <div class="live">
+        <span class="pill" id="status"></span>
+        <span class="pill count" id="count"><b>0</b> joined</span>
+      </div>
+    </div>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/common.js"></script>
+  <script>
+    const code = (location.pathname.split('/present/')[1] || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const STATUS = {
+      waiting: '⏳ Join now. Starting soon',
+      open: '● Quiz in progress. You can still join',
+      paused: '⏸ Paused',
+      closed: '■ This session has ended',
+    };
+    function setStatus(st) {
+      const el = $('#status');
+      el.className = 'pill ' + st;
+      el.textContent = STATUS[st] || '';
+    }
+    (async () => {
+      let info;
+      try { info = await api('GET', '/api/join/' + code); } catch (e) {
+        $('#stage').outerHTML = `<div class="err"><div style="font-size:64px">🤷</div><h1>${esc(e.message)}</h1></div>`;
+        return;
+      }
+      // Same rule as the lecturer page: public URL if configured, LAN IP on localhost, else this address
+      let origin = location.origin;
+      try {
+        const net = await api('GET', '/api/net');
+        if (net.appUrl) origin = net.appUrl;
+        else if (/^(localhost|127\.|\[::1\])/.test(location.hostname) && net.ips[0]) origin = `${location.protocol}//${net.ips[0]}:${location.port || 80}`;
+      } catch {}
+      const joinUrl = `${origin}/q/${code}`;
+      document.title = `Join: ${info.title}`;
+      $('#title').textContent = info.title;
+      $('#url').textContent = joinUrl.replace(/^https?:\/\//, '');
+      $('#code').textContent = code;
+      $('#qr').src = '/api/qr?text=' + encodeURIComponent(joinUrl);
+      setStatus(info.status);
+
+      // live status + number of students who joined
+      const lobby = io({ auth: { role: 'lobby', code } });
+      lobby.on('quizStatus', setStatus);
+      lobby.on('count', (n) => { $('#count').innerHTML = `<b>${n}</b> joined`; });
+    })();
+
+    const toggleFs = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()).catch?.(() => {});
+    $('#fs').onclick = toggleFs;
+    document.addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') toggleFs(); });
+    document.addEventListener('fullscreenchange', () => { $('#fs').classList.toggle('hidden', !!document.fullscreenElement); });
+  </script>
+</body>
+</html>

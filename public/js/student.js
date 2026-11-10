@@ -57,10 +57,11 @@ function renderJoin() {
   renderJoin.lobby = lobby;
 }
 function updateJoinStatus() {
-  const open = info.status === 'open';
+  const open = ['waiting', 'open', 'paused'].includes(info.status); // you can join before the lecturer starts
   $('#jForm').classList.toggle('hidden', !open);
   $('#jWaiting').classList.toggle('hidden', open);
   $('#jWaitingTxt').textContent = info.status === 'closed' ? 'This quiz session has ended.' : 'Waiting for your lecturer to open the quiz…';
+  $('#jStart').textContent = info.status === 'waiting' ? 'I understand, join the quiz' : 'I understand, start quiz';
 }
 
 $('#jForm').addEventListener('submit', async (e) => {
@@ -126,11 +127,46 @@ function onState(s) {
     return;
   }
 
+  // ---- waiting room: joined, lecturer hasn't pressed Start yet
+  if (s.status === 'waiting') {
+    disarm();
+    hideOverlays();
+    message('⏳', "You're in!", `<p class="muted">Hi ${esc(s.name)}. Waiting for your lecturer to start <b>${esc(s.quizTitle)}</b>.</p>
+      <p class="muted small">Keep this page open. The quiz starts here automatically.</p><div class="spinner" style="color:var(--primary)"></div>`);
+    return;
+  }
+
+  // ---- paused by the lecturer: questions hidden, clock stopped, leaving is allowed
+  if (s.paused) {
+    armed = false;
+    frozenLocal = false;
+    needsReentry = false;
+    stopTimer();
+    show('quiz');
+    $('#qTitle').textContent = s.quizTitle;
+    $('#oFrozen').classList.add('hidden');
+    $('#oResume').classList.add('hidden');
+    $('#oPausedTime').textContent = s.remainingMs != null ? `Time left: ${fmtTime(s.remainingMs)}, paused.` : '';
+    $('#oPaused').classList.remove('hidden');
+    return;
+  }
+  $('#oPaused').classList.add('hidden');
+
   // ---- active
   answers = { ...s.answers };
   const wasActive = prev && prev.status === 'active';
   if (!wasActive) current = Math.min(s.current || 0, s.questions.length - 1);
-  if (prev && prev.status === 'frozen') {
+  if (prev && (prev.status === 'waiting' || prev.paused)) {
+    const started = prev.status === 'waiting';
+    $('#oResumeTitle').textContent = started ? 'The quiz has started!' : 'Quiz resumed';
+    $('#oResumeTxt').textContent = started
+      ? 'Tap below to begin. Stay in this screen until you submit. Good luck!'
+      : 'Your lecturer resumed the quiz. Tap below to continue where you were.';
+    $('#oResumeBtn').textContent = started ? 'Begin quiz' : 'Continue quiz';
+    needsReentry = true;
+    $('#oResume').classList.remove('hidden');
+  } else if (prev && prev.status === 'frozen') {
+    $('#oResumeBtn').textContent = 'Continue quiz';
     frozenLocal = false;
     $('#oFrozen').classList.add('hidden');
     const restarted = s.attemptNo !== prev.attemptNo;
@@ -173,7 +209,7 @@ function renderQuestion() {
 
 $('#qBody').addEventListener('click', (e) => {
   const b = e.target.closest('[data-o]');
-  if (!b || !state || state.status !== 'active') return;
+  if (!b || !state || state.status !== 'active' || state.paused || !state.questions) return;
   const q = state.questions[current];
   answers[q.id] = b.dataset.o;
   socket.emit('answer', { qid: q.id, oid: b.dataset.o });
@@ -185,8 +221,9 @@ $('#qStrip').addEventListener('click', (e) => {
   if (b) go(+b.dataset.i);
 });
 $('#qPrev').onclick = () => go(current - 1);
-$('#qNext').onclick = () => (current === state.questions.length - 1 ? confirmSubmit() : go(current + 1));
+$('#qNext').onclick = () => { if (state?.questions) current === state.questions.length - 1 ? confirmSubmit() : go(current + 1); };
 function go(i) {
+  if (!state?.questions) return;
   if (i < 0 || i >= state.questions.length) return;
   current = i;
   socket.emit('goto', i);
@@ -226,7 +263,7 @@ function message(icon, title, body, actions = '') {
   show('sMsg');
   $('#msgCard').innerHTML = `<div style="font-size:52px">${icon}</div><h1>${esc(title)}</h1><div class="muted">${body.startsWith('<') ? body : esc(body)}</div><div style="margin-top:16px">${actions}</div>`;
 }
-function hideOverlays() { $('#oFrozen').classList.add('hidden'); $('#oResume').classList.add('hidden'); }
+function hideOverlays() { ['#oFrozen', '#oResume', '#oPaused'].forEach((x) => $(x).classList.add('hidden')); }
 
 // Back into the quiz after an unlock (needs a tap so fullscreen is allowed)
 $('#oResumeBtn').onclick = async () => {

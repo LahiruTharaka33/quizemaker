@@ -237,7 +237,7 @@ async function renderList() {
       </a>
       ${q.live.length === 1
         ? `<a class="btn sm ok" href="#/run/${q.live[0].id}">Open live</a>`
-        : `<button class="btn sm primary" data-start="${q.id}">▶ Start</button>`}
+        : `<button class="btn sm primary" data-start="${q.id}">▶ Run</button>`}
     </div>`).join('');
   items.addEventListener('click', (e) => {
     const b = e.target.closest('[data-start]');
@@ -254,21 +254,24 @@ function fmtDate(t) {
     : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
 }
 function runBadge(s) {
-  return s === 'open' ? '<span class="badge ok"><i class="dot"></i>Live</span>' : '<span class="badge">Ended</span>';
+  return s === 'open' ? '<span class="badge ok"><i class="dot"></i>Live</span>'
+    : s === 'waiting' ? '<span class="badge warn">⏳ Waiting to start</span>'
+    : s === 'paused' ? '<span class="badge primary">⏸ Paused</span>'
+    : '<span class="badge">Ended</span>';
 }
 
 // Start a saved quiz: creates a new session with its own join code
 async function startSession(quizId, title = 'this quiz') {
   const r = await modal(`
-    <h2>Start “${esc(title)}”</h2>
-    <p class="muted small">Students get a new join code and link. Results are kept separately for this session.</p>
+    <h2>Run “${esc(title)}”</h2>
+    <p class="muted small">This opens a <b>waiting room</b> with a new join code, link and QR code. Students can join and wait. <b>The quiz only begins when you press ▶ Start quiz.</b> Results are kept separately for this session.</p>
     <label class="field"><span>Session name <span class="muted">(optional)</span></span>
       <input type="text" id="runLabel" maxlength="80" placeholder="e.g. Group A, Tuesday 10am" autofocus></label>
-    <div class="row end"><button class="btn" data-value="cancel">Cancel</button><button class="btn ok" data-value="go">▶ Start now</button></div>`);
+    <div class="row end"><button class="btn" data-value="cancel">Cancel</button><button class="btn ok" data-value="go">Open waiting room</button></div>`);
   if (r?.value !== 'go') return;
   try {
     const run = await hostApi('POST', quizId, '/runs', { label: $('#runLabel', r.root).value.trim() });
-    toast('Quiz started — share the code ' + run.code);
+    toast('Waiting room open. Share code ' + run.code + ', then press Start quiz.');
     location.hash = '#/run/' + run.id;
   } catch (e) { toast(e.message, 'danger'); }
 }
@@ -280,8 +283,8 @@ async function renderQuiz(quizId) {
     view.innerHTML = `<div class="wrap"><div class="card empty"><div class="big">🤷</div><p>${esc(e.message)}</p><a class="btn" href="#/">Back</a></div></div>`;
     return;
   }
-  const live = quiz.runs.filter((r) => r.status === 'open');
-  const past = quiz.runs.filter((r) => r.status !== 'open');
+  const live = quiz.runs.filter((r) => r.status !== 'closed');
+  const past = quiz.runs.filter((r) => r.status === 'closed');
   const runRow = (r) => `
     <a class="run-row" href="#/run/${r.id}">
       <div style="flex:1;min-width:0">
@@ -298,14 +301,14 @@ async function renderQuiz(quizId) {
       <div class="muted small" style="margin-bottom:14px">${quiz.questions.length} question${quiz.questions.length === 1 ? "" : "s"} · ${quiz.timeLimitMin ? quiz.timeLimitMin + ' min' : 'no time limit'}
         · saved ${fmtDate(quiz.updatedAt || quiz.createdAt)}</div>
 
-      <button class="btn ok block" id="start" style="min-height:54px;font-size:1.05rem;margin-bottom:10px">▶ Start quiz now</button>
+      <button class="btn ok block" id="start" style="min-height:54px;font-size:1.05rem;margin-bottom:10px">▶ Run this quiz</button>
       <div class="row" style="margin-bottom:16px">
         <a class="btn" href="#/edit/${quiz.id}" style="flex:1">✎ Edit</a>
         <button class="btn" id="dup" style="flex:1">⧉ Duplicate</button>
         <button class="btn ghost" id="del" title="Delete quiz">🗑</button>
       </div>
 
-      ${live.length ? `<div class="card"><h3>Live now</h3>${live.map(runRow).join('')}</div>` : ''}
+      ${live.length ? `<div class="card"><h3>Open now</h3>${live.map(runRow).join('')}</div>` : ''}
 
       <div class="card">
         <h3>Past sessions</h3>
@@ -528,7 +531,8 @@ async function renderMonitor(runId) {
         <div style="flex:1;min-width:0"><h1 style="margin:0">${esc(quiz.title)}${quiz.label ? ` <span class="muted" style="font-weight:500">· ${esc(quiz.label)}</span>` : ''}</h1>
           <div class="muted small">Started ${fmtDate(quiz.startedAt)} · ${quiz.questions.length} question${quiz.questions.length === 1 ? "" : "s"} · ${quiz.timeLimitMin ? quiz.timeLimitMin + ' min' : 'no time limit'} · <span id="statusB">${runBadge(quiz.status)}</span></div></div>
       </div>
-      <div class="row" style="margin-bottom:14px" id="ctrl"></div>
+      <div class="row" style="margin-bottom:10px" id="ctrl"></div>
+      <div class="state-banner hidden" id="stateBanner"></div>
 
       <div class="card share">
         <div>
@@ -536,11 +540,15 @@ async function renderMonitor(runId) {
           <div class="code-big">${quiz.code}</div>
           <div class="link-box" style="margin:8px 0"><input type="text" readonly value="${esc(joinUrl)}" id="joinUrl"><button class="btn" id="copy">Copy</button></div>
           <div class="row">
+            <a class="btn sm" href="/present/${quiz.code}" target="_blank" rel="noopener">⛶ Open QR in new tab</a>
             ${navigator.share ? '<button class="btn sm" id="shareBtn">Share…</button>' : ''}
 
           </div>
         </div>
-        <img class="qr" alt="QR code for the join link" src="/api/qr?text=${encodeURIComponent(joinUrl)}">
+        <a class="qr-link" href="/present/${quiz.code}" target="_blank" rel="noopener" title="Open a big QR code in a new tab">
+          <img class="qr" alt="QR code for the join link. Tap to open it big in a new tab" src="/api/qr?text=${encodeURIComponent(joinUrl)}">
+          <span class="qr-hint">⛶ Tap for big screen</span>
+        </a>
       </div>
 
       <div class="stats">
@@ -570,30 +578,54 @@ async function renderMonitor(runId) {
 
   function renderControls() {
     $('#statusB').innerHTML = runBadge(quiz.status);
-    $('.share').classList.toggle('ended', quiz.status !== 'open');
+    $('.share').classList.toggle('ended', quiz.status === 'closed');
+    const waiting = [...attempts.values()].filter((x) => x.status === 'waiting').length;
+    const main = {
+      waiting: `<button class="btn ok go-big" data-st="open">▶ Start quiz <span class="pill">${waiting} waiting</span></button>`,
+      open: '<button class="btn" data-st="paused">⏸ Pause</button>',
+      paused: '<button class="btn ok" data-st="open">▶ Resume</button>',
+      closed: '<button class="btn" data-st="waiting">↺ Reopen</button><button class="btn primary" id="runAgain">↻ Run again (new session)</button>',
+    }[quiz.status] || '';
     $('#ctrl').innerHTML = `
-      ${quiz.status === 'open'
-        ? '<button class="btn danger" data-st="closed">■ End session</button>'
-        : '<button class="btn" data-st="open">↺ Reopen</button>'}
+      ${main}
+      ${quiz.status !== 'closed' ? '<button class="btn danger" data-st="closed">■ End session</button>' : ''}
       <a class="btn" href="/api/runs/${quiz.id}/results.csv">⬇ Results CSV</a>
       <button class="btn ghost" id="delRun">🗑 Delete session</button>`;
+    const banner = {
+      waiting: '⏳ <b>Waiting room.</b> Students can join now. Nobody sees the questions until you press <b>▶ Start quiz</b>.',
+      paused: '⏸ <b>Paused.</b> Questions are hidden and every timer is stopped. Students can leave the app without freezing.',
+    }[quiz.status];
+    $('#stateBanner').innerHTML = banner || '';
+    $('#stateBanner').classList.toggle('hidden', !banner);
   }
   renderControls();
 
   $('#ctrl').addEventListener('click', async (e) => {
     const st = e.target.closest('[data-st]')?.dataset.st;
     if (st) {
+      if (st === 'open' && quiz.status === 'waiting') {
+        const n = [...attempts.values()].filter((x) => x.status === 'waiting').length;
+        const r = await modal(`<h2>Start the quiz now?</h2>
+          <p class="muted">${n ? `<b>${n} student${n === 1 ? '' : 's'}</b> in the waiting room begin${n === 1 ? 's' : ''} at the same moment.` : '<b>No students have joined yet.</b>'} Students who join later start straight away.</p>
+          <div class="row end"><button class="btn" data-value="no">Not yet</button><button class="btn ok" data-value="yes">▶ Start now</button></div>`);
+        if (r?.value !== 'yes') return;
+      }
       if (st === 'closed') {
         const r = await modal(`<h2>End this session?</h2><p class="muted">No one new can join. Everyone still writing (including frozen students) is submitted automatically with their current answers. The quiz stays saved, so you can start it again any time.</p>
           <div class="row end"><button class="btn" data-value="no">Cancel</button><button class="btn danger" data-value="yes">End session</button></div>`);
         if (r?.value !== 'yes') return;
       }
       try {
-        await api('POST', `/api/runs/${quiz.id}/status`, { status: st });
-        quiz.status = st;
+        const was = quiz.status;
+        const res = await api('POST', `/api/runs/${quiz.id}/status`, { status: st });
+        quiz.status = res.status;
         renderControls();
-        toast(st === 'open' ? 'Session reopened, students can join with the same code' : 'Session ended');
+        toast({ open: was === 'paused' ? '▶ Resumed for everyone' : '▶ Quiz started for everyone', paused: '⏸ Paused for everyone', closed: 'Session ended', waiting: 'Reopened as a waiting room. Press Start quiz when ready.' }[st]);
       } catch (err) { toast(err.message, 'danger'); }
+    }
+    if (e.target.closest('#runAgain')) {
+      startSession(quiz.quizId, quiz.quizTitle);
+      return;
     }
     if (e.target.closest('#delRun')) {
       const r = await modal(`<h2>Delete this session?</h2><p class="muted">This session's student results will be permanently deleted. The saved quiz is kept. This cannot be undone.</p>
@@ -622,7 +654,7 @@ async function renderMonitor(runId) {
     $('#sFrozen').textContent = all.filter((a) => a.status === 'frozen').length;
     $('#sDone').textContent = all.filter((a) => a.status === 'submitted').length;
 
-    const rank = { frozen: 0, active: 1, submitted: 2 };
+    const rank = { frozen: 0, active: 1, waiting: 2, submitted: 3 };
     const list = all
       .filter((a) => filter === 'all' || a.status === filter)
       .filter((a) => !search || a.name.toLowerCase().includes(search) || a.studentId.toLowerCase().includes(search))
@@ -634,12 +666,14 @@ async function renderMonitor(runId) {
       return;
     }
     box.innerHTML = list.map(studentCard).join('');
+    if (quiz.status === 'waiting') renderControls(); // live "N waiting" on the Start button
   }
 
   function studentCard(a) {
     const pct = a.total ? Math.round((a.answered / a.total) * 100) : 0;
     const viol = a.violations.filter((v) => !v.system).length;
     const badge = a.status === 'frozen' ? '<span class="badge danger">🔒 Frozen</span>'
+      : a.status === 'waiting' ? '<span class="badge warn">⏳ Waiting</span>'
       : a.status === 'active' ? '<span class="badge primary"><i class="dot"></i>Writing</span>'
       : '<span class="badge ok">✓ Submitted</span>';
     return `
@@ -1005,6 +1039,7 @@ async function renderMonitor(runId) {
     refreshAnswersSoon();
   });
   socket.on('removed', (id) => { attempts.delete(id); renderStudents(); refreshAnswersSoon(); });
+  socket.on('runStatus', (st) => { if (st !== quiz.status) { quiz.status = st; renderControls(); renderStudents(); } });
   socket.on('alert', ({ name, reason }) => {
     toast(`🔒 ${name} — ${reason}`, 'danger');
     beep();

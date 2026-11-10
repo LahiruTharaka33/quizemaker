@@ -150,6 +150,7 @@ function studentView(a) {
     name: a.name,
     quizTitle: quiz.title,
     quizStatus: quiz.status,
+    paused: quiz.status === 'paused',
     attemptNo: a.attemptNo,
     freezeReason: a.freezeReason,
     requireFullscreen: quiz.settings.requireFullscreen,
@@ -157,7 +158,7 @@ function studentView(a) {
     total: quiz.questions.length,
     answeredCount: Object.keys(a.answers).length,
   };
-  if (a.status === 'active') {
+  if (a.status === 'active' && quiz.status !== 'paused') {
     const byId = Object.fromEntries(quiz.questions.map((q) => [q.id, q]));
     view.questions = a.order
       .filter((qid) => byId[qid])
@@ -213,6 +214,7 @@ function push(a) {
 
 function freeze(a, type, detail) {
   if (a.status !== 'active') return;
+  if (db.runs[a.runId]?.status === 'paused') return;
   a.elapsedMs = elapsed(a);
   a.activeSince = null;
   a.status = 'frozen';
@@ -259,7 +261,7 @@ function unfreeze(a, mode, opts = {}) {
     }
   }
   a.status = 'active';
-  a.activeSince = now();
+  a.activeSince = quiz.status === 'open' ? now() : null; // stays stopped while the session is paused
   a.freezeReason = null;
   a.frozenAt = null;
   a.violations.push({ type: mode === 'restart' ? 'Restarted by lecturer' : 'Resumed by lecturer', at: now(), system: true });
@@ -509,13 +511,53 @@ function runSummary(r) {
 }
 function notifyRun(run) {
   io.to('lobby:' + run.code).emit('quizStatus', run.status);
-  for (const a of attemptsOf(run.id)) io.to('attempt:' + a.id).emit('state', studentView(a));
+  io.to('host:' + run.id).emit('runStatus', run.status); // other lecturer devices stay in sync
+  // one update per student and per lecturer card for every state change
+  for (const a of attemptsOf(run.id)) {
+    io.to('attempt:' + a.id).emit('state', studentView(a));
+    io.to('host:' + run.id).emit('attempt', hostView(a));
+  }
   save();
 }
+// Lecturer presses Start: everyone in the waiting room begins at the same moment
+function startRun(run) {
+  if (run.status !== 'waiting') return;
+  run.status = 'open';
+  run.quizStartedAt = now();
+  for (const a of attemptsOf(run.id)) {
+    if (a.status !== 'waiting') continue;
+    a.status = 'active';
+    a.startedAt = now();
+    a.activeSince = now();
+  }
+  notifyRun(run);
+}
+// Pause: clocks stop, questions are hidden, leaving the app is not a violation
+function pauseRun(run) {
+  if (run.status !== 'open') return;
+  for (const a of attemptsOf(run.id)) {
+    if (a.status === 'active') { a.elapsedMs = elapsed(a); a.activeSince = null; }
+  }
+  run.status = 'paused';
+  run.pausedAt = now();
+  notifyRun(run);
+}
+function resumeRun(run) {
+  if (run.status !== 'paused') return;
+  run.status = 'open';
+  run.pausedMs = (run.pausedMs || 0) + (now() - (run.pausedAt || now()));
+  run.pausedAt = null;
+  for (const a of attemptsOf(run.id)) if (a.status === 'active') a.activeSince = now();
+  notifyRun(run);
+}
+const lobbyCount = (run) => io.to('lobby:' + run.code).emit('count', attemptsOf(run.id).length);
+
 function closeRun(run) {
   if (run.status === 'closed') return;
+  // (paused clocks are already stopped, so ending a paused session needs no resume first)
   run.status = 'closed';
   run.closedAt = now();
+  run.pausedAt = null;
   for (const a of attemptsOf(run.id)) if (a.status !== 'submitted') submit(a, 'closed');
   notifyRun(run);
 }
@@ -532,7 +574,7 @@ app.get('/api/quizzes', requireUser, (req, res) => {
         createdAt: q.createdAt, updatedAt: q.updatedAt || q.createdAt,
         runCount: runs.length,
         lastRunAt: runs.reduce((m, r) => Math.max(m, r.startedAt), 0) || null,
-        live: runs.filter((r) => r.status === 'open').map((r) => ({ id: r.id, code: r.code, label: r.label })),
+        live: runs.filter((r) => r.status !== 'closed').map((r) => ({ id: r.id, code: r.code, label: r.label })),
       };
     });
   res.json(list);
@@ -604,7 +646,7 @@ app.post('/api/quizzes/:id/runs', hostAuth, (req, res) => {
   if (!q.questions.length) return res.status(400).json({ error: 'Add at least one question before starting.' });
   const { title, description, timeLimitMin, settings, questions } = q;
   const run = {
-    id: id(9), quizId: q.id, ownerId: req.user.id, code: makeCode(), status: 'open',
+    id: id(9), quizId: q.id, ownerId: req.user.id, code: makeCode(), status: 'waiting',
     label: clean(req.body?.label, 80), startedAt: now(), closedAt: null,
     // snapshot, so later edits to the saved quiz don't change this session
     ...structuredClone({ title, description, timeLimitMin, settings, questions }),
@@ -620,15 +662,21 @@ app.get('/api/runs/:id', runAuth, (req, res) => {
 });
 
 app.post('/api/runs/:id/status', runAuth, (req, res) => {
-  const status = req.body?.status;
-  if (!['open', 'closed'].includes(status)) return res.status(400).json({ error: 'Bad status' });
-  if (status === 'closed') closeRun(req.run);
-  else if (req.run.status !== 'open') {
-    req.run.status = 'open';
-    req.run.closedAt = null;
-    notifyRun(req.run);
-  }
-  res.json({ ok: true });
+  const run = req.run;
+  const want = req.body?.status;
+  if (want === 'open') {
+    if (run.status === 'waiting') startRun(run);
+    else if (run.status === 'paused') resumeRun(run);
+    else if (run.status === 'closed') { run.status = 'waiting'; run.closedAt = null; notifyRun(run); } // reopen -> lobby
+  } else if (want === 'paused') {
+    if (run.status !== 'open') return res.status(409).json({ error: 'Only a running quiz can be paused.' });
+    pauseRun(run);
+  } else if (want === 'closed') closeRun(run);
+  else if (want === 'waiting') {
+    if (run.status !== 'closed') return res.status(409).json({ error: 'Only an ended session can be reopened.' });
+    run.status = 'waiting'; run.closedAt = null; notifyRun(run);
+  } else return res.status(400).json({ error: 'Bad status' });
+  res.json({ ok: true, status: run.status });
 });
 
 app.delete('/api/runs/:id', runAuth, (req, res) => {
@@ -768,7 +816,7 @@ app.get('/api/join/:code', (req, res) => {
 app.post('/api/join/:code', (req, res) => {
   const quiz = runByCode(req.params.code);
   if (!quiz) return res.status(404).json({ error: 'No quiz with this code.' });
-  if (quiz.status !== 'open') return res.status(403).json({ error: 'This quiz session has ended.' });
+  if (quiz.status === 'closed') return res.status(403).json({ error: 'This quiz session has ended.' });
   const name = clean(req.body?.name, 80);
   const studentId = clean(req.body?.studentId, 40);
   if (!name || !studentId) return res.status(400).json({ error: 'Enter your name and student ID.' });
@@ -779,12 +827,13 @@ app.post('/api/join/:code', (req, res) => {
   const { order, optionOrder } = buildOrder(quiz, quiz.settings.shuffleQuestions, quiz.settings.shuffleOptions);
   const a = {
     id: id(9), token: id(24), runId: quiz.id, name, studentId,
-    status: 'active', order, optionOrder, answers: {}, current: 0,
+    status: quiz.status === 'waiting' ? 'waiting' : 'active', order, optionOrder, answers: {}, current: 0,
     attemptNo: 1, violations: [], freezeReason: null,
-    startedAt: now(), activeSince: now(), elapsedMs: 0, ua: clean(req.get('user-agent'), 300),
+    startedAt: now(), activeSince: quiz.status === 'open' ? now() : null, elapsedMs: 0, ua: clean(req.get('user-agent'), 300),
   };
   db.attempts[a.id] = a;
   push(a);
+  lobbyCount(quiz);
   res.json({ token: a.token });
 });
 
@@ -801,6 +850,8 @@ app.post('/api/violation', (req, res) => {
 
 // Pretty student link: /q/ABC123
 app.get('/q/:code', (req, res) => res.sendFile(path.join(__dirname, 'public', 'student.html')));
+// Big QR + code for a projector / second screen
+app.get('/present/:code', (req, res) => res.sendFile(path.join(__dirname, 'public', 'present.html')));
 
 // ---------------------------------------------------------------- sockets
 io.on('connection', (socket) => {
@@ -832,6 +883,7 @@ io.on('connection', (socket) => {
       io.to('attempt:' + a.id).emit('state', { status: 'removed' });
       delete db.attempts[a.id];
       io.to('host:' + quiz.id).emit('removed', a.id);
+      lobbyCount(quiz);
       save();
     });
     return;
@@ -839,7 +891,10 @@ io.on('connection', (socket) => {
 
   // Student waiting room (before joining) – live quiz status
   if (auth.role === 'lobby') {
-    socket.join('lobby:' + String(auth.code || '').toUpperCase());
+    const code = String(auth.code || '').toUpperCase();
+    socket.join('lobby:' + code);
+    const run = Object.values(db.runs).find((r) => r.code === code);
+    if (run) { socket.emit('quizStatus', run.status); socket.emit('count', attemptsOf(run.id).length); }
     return;
   }
 
@@ -854,13 +909,13 @@ io.on('connection', (socket) => {
 
   // A brand-new page load while the quiz was running = page refreshed / reopened / tab killed.
   // (The client only sets `fresh` when it found a saved token at page load, not right after joining.)
-  if (auth.fresh && a.status === 'active') {
+  if (auth.fresh && a.status === 'active' && db.runs[a.runId]?.status === 'open') {
     freeze(a, 'Page reloaded or reopened');
   } else {
     push(a);
   }
 
-  const active = () => db.attempts[a.id] && a.status === 'active';
+  const active = () => db.attempts[a.id] && a.status === 'active' && db.runs[a.runId]?.status === 'open';
   socket.on('answer', ({ qid, oid } = {}) => {
     if (!active()) return;
     const quiz = db.runs[a.runId];
