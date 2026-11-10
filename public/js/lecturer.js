@@ -395,13 +395,14 @@ async function renderMonitor(quizId) {
   }
 
   // Build a join link phones can actually reach (swap localhost for the LAN IP).
+  // Join link address: the configured public URL (APP_URL / Vercel production domain) wins;
+  // on localhost use the LAN IP so phones can reach it; otherwise the address in the browser.
   let origin = location.origin;
-  if (/^(localhost|127\.|\[::1\])/.test(location.hostname)) {
-    try {
-      const net = await api('GET', '/api/net');
-      if (net.ips[0]) origin = `${location.protocol}//${net.ips[0]}:${location.port || 80}`;
-    } catch {}
-  }
+  try {
+    const net = await api('GET', '/api/net');
+    if (net.appUrl) origin = net.appUrl;
+    else if (/^(localhost|127\.|\[::1\])/.test(location.hostname) && net.ips[0]) origin = `${location.protocol}//${net.ips[0]}:${location.port || 80}`;
+  } catch {}
   const joinUrl = `${origin}/q/${quiz.code}`;
 
   const attempts = new Map();

@@ -287,7 +287,11 @@ function noteFailure(key) {
 
 // ---------------------------------------------------------------- password reset
 // Email via SMTP when configured; otherwise the reset link is printed in the server console.
-const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
+// Public address used in join links and reset emails. On Vercel, falls back to the production domain
+// (so links never point at a preview/branch URL like project-git-main-….vercel.app).
+const APP_URL = (process.env.APP_URL
+  || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? 'https://' + process.env.VERCEL_PROJECT_PRODUCTION_URL : '')
+).replace(/\/+$/, '');
 const SMTP = process.env.SMTP_HOST ? {
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT) || 587,
@@ -528,7 +532,7 @@ app.get('/api/quizzes/:id/results.csv', hostAuth, (req, res) => {
 const lanIps = () => Object.values(os.networkInterfaces()).flat()
   .filter((i) => i && i.family === 'IPv4' && !i.internal && !/^169\.254\./.test(i.address))
   .map((i) => i.address);
-app.get('/api/net', (req, res) => res.json({ ips: lanIps() }));
+app.get('/api/net', (req, res) => res.json({ ips: lanIps(), appUrl: APP_URL }));
 
 app.get('/api/qr', async (req, res) => {
   try {
