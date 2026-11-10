@@ -1,6 +1,8 @@
 // Lecturer app: login, quiz list, builder, live monitor
 const view = $('#view');
 const hostApi = (method, id, path = '', body) => api(method, `/api/quizzes/${id}${path}`, body);
+// correct option ids of a question (older quizzes store a single `correct`)
+const cids = (q) => (Array.isArray(q.correctIds) && q.correctIds.length ? q.correctIds : [q.correct]);
 
 let me = null;      // logged-in lecturer
 let cleanup = null; // teardown for the current view (sockets/timers)
@@ -314,7 +316,7 @@ async function renderQuiz(quizId) {
         <summary style="cursor:pointer;font-weight:700">Questions (${quiz.questions.length})</summary>
         <ol style="padding-left:20px;margin:12px 0 0">
           ${quiz.questions.map((q) => `<li style="margin-bottom:10px"><div>${esc(q.text)}</div>
-            <div class="muted small">${q.options.map((o) => (o.id === q.correct ? `<b style="color:var(--ok)">✓ ${esc(o.text)}</b>` : esc(o.text))).join(' · ')}</div></li>`).join('')}
+            <div class="muted small">${q.options.map((o) => (cids(q).includes(o.id) ? `<b style="color:var(--ok)">✓ ${esc(o.text)}</b>` : esc(o.text))).join(' · ')}</div></li>`).join('')}
         </ol>
       </details>
       <p class="muted small">Editing the quiz only changes future sessions. Sessions already started keep the questions they began with.</p>
@@ -341,7 +343,7 @@ async function renderQuiz(quizId) {
 const rid = () => Math.random().toString(36).slice(2, 9);
 const blankQ = () => {
   const o = [{ id: rid(), text: '' }, { id: rid(), text: '' }, { id: rid(), text: '' }, { id: rid(), text: '' }];
-  return { id: rid(), text: '', points: 1, options: o, correct: o[0].id };
+  return { id: rid(), text: '', points: 1, options: o, correct: o[0].id, correctIds: [o[0].id] };
 };
 
 async function renderBuilder(quizId) {
@@ -384,6 +386,7 @@ async function renderBuilder(quizId) {
     return `<label class="switch"><span class="txt"><b>${title}</b><small>${sub}</small></span><input type="checkbox" data-set="${key}"></label>`;
   }
 
+  quiz.questions.forEach((q) => { q.correctIds = cids(q).slice(); });
   $('#title').value = quiz.title;
   $('#desc').value = quiz.description || '';
   $('#time').value = quiz.timeLimitMin ?? 0;
@@ -403,10 +406,10 @@ async function renderBuilder(quizId) {
           <button class="btn ghost icon" data-a="delQ" title="Delete question">🗑</button>
         </div>
         <label class="field"><textarea data-f="text" placeholder="Type the question…" rows="2">${esc(q.text)}</textarea></label>
-        <div class="muted small" style="margin:-6px 0 8px">Tap the circle to mark the correct answer.</div>
+        <div class="muted small" style="margin:-6px 0 8px">Tap the circle to mark the correct answer. You can mark more than one.</div>
         ${q.options.map((o, j) => `
           <div class="opt" data-o="${j}">
-            <input class="correct" type="radio" name="c${q.id}" ${q.correct === o.id ? 'checked' : ''} data-a="correct" aria-label="Mark as correct">
+            <input class="correct" type="checkbox" ${q.correctIds.includes(o.id) ? 'checked' : ''} data-a="correct" aria-label="Mark as correct">
             <input type="text" value="${esc(o.text)}" data-f="opt" placeholder="Answer ${String.fromCharCode(65 + j)}">
             <button class="btn ghost icon" data-a="delO" title="Remove answer" ${q.options.length <= 2 ? 'disabled' : ''}>✕</button>
           </div>`).join('')}
@@ -432,10 +435,20 @@ async function renderBuilder(quizId) {
     const q = quiz.questions[i];
     const oi = b.closest('[data-o]') ? +b.closest('[data-o]').dataset.o : -1;
     switch (b.dataset.a) {
-      case 'correct': q.correct = q.options[oi].id; return;
+      case 'correct': {
+        const oid = q.options[oi].id;
+        if (q.correctIds.includes(oid)) {
+          if (q.correctIds.length === 1) { b.checked = true; return toast('Each question needs at least one correct answer.'); }
+          q.correctIds = q.correctIds.filter((x) => x !== oid);
+        } else q.correctIds.push(oid);
+        q.correct = q.correctIds[0];
+        return;
+      }
       case 'addO': q.options.push({ id: rid(), text: '' }); break;
       case 'delO':
-        if (q.correct === q.options[oi].id) q.correct = q.options[oi === 0 ? 1 : 0].id;
+        q.correctIds = q.correctIds.filter((x) => x !== q.options[oi].id);
+        if (!q.correctIds.length) q.correctIds = [q.options[oi === 0 ? 1 : 0].id];
+        q.correct = q.correctIds[0];
         q.options.splice(oi, 1); break;
       case 'delQ':
         if (quiz.questions.length === 1) return toast('A quiz needs at least one question.');
@@ -467,7 +480,9 @@ async function renderBuilder(quizId) {
       if (!q.text.trim()) return toast(`Question ${i + 1} is empty.`);
       const filled = q.options.filter((o) => o.text.trim());
       if (filled.length < 2) return toast(`Question ${i + 1} needs at least 2 answers.`);
-      if (!filled.some((o) => o.id === q.correct)) return toast(`Question ${i + 1}: mark a correct answer that isn't empty.`);
+      if (!filled.some((o) => q.correctIds.includes(o.id))) return toast(`Question ${i + 1}: mark a correct answer that isn't empty.`);
+      q.correctIds = q.correctIds.filter((cid) => filled.some((o) => o.id === cid));
+      q.correct = q.correctIds[0];
     }
     $('#save').disabled = $('#saveStart').disabled = true;
     try {
@@ -535,13 +550,21 @@ async function renderMonitor(runId) {
         <div class="stat ok"><b id="sDone">0</b><span>Submitted</span></div>
       </div>
 
-      <div class="row" style="margin-bottom:10px">
-        <input type="text" id="search" placeholder="Search name or ID…" style="flex:1;min-width:180px">
+      <div class="seg" id="viewSeg" role="tablist">
+        <button class="on" data-v="students" role="tab" aria-selected="true">👥 Students</button>
+        <button data-v="questions" role="tab" aria-selected="false">📊 Questions</button>
       </div>
-      <div class="tabs" id="tabs">
-        ${['all', 'frozen', 'active', 'submitted'].map((t) => `<button class="btn sm ${t === 'all' ? 'on' : ''}" data-t="${t}">${{ all: 'All', frozen: '🔒 Frozen', active: 'Writing', submitted: 'Submitted' }[t]}</button>`).join('')}
+
+      <div id="paneStudents">
+        <div class="row" style="margin-bottom:10px">
+          <input type="text" id="search" placeholder="Search name or ID…" style="flex:1;min-width:180px">
+        </div>
+        <div class="tabs" id="tabs">
+          ${['all', 'frozen', 'active', 'submitted'].map((t) => `<button class="btn sm ${t === 'all' ? 'on' : ''}" data-t="${t}">${{ all: 'All', frozen: '🔒 Frozen', active: 'Writing', submitted: 'Submitted' }[t]}</button>`).join('')}
+        </div>
+        <div class="students" id="students"></div>
       </div>
-      <div class="students" id="students"></div>
+      <div id="paneQuestions" class="hidden"></div>
       <div style="height:30px"></div>
     </div>`;
 
@@ -633,6 +656,8 @@ async function renderMonitor(runId) {
           ${viol ? `<span style="color:var(--danger)">⚠ ${viol} violation${viol > 1 ? 's' : ''}</span>` : ''}
           ${a.status === 'submitted' && a.score != null ? `<span><b style="color:var(--text)">${a.score}/${a.maxScore}</b> score</span>` : ''}
           ${a.status === 'active' && a.remainingMs != null ? `<span data-rem="${a.id}">⏱ ${fmtTime(a.remainingMs)}</span>` : ''}
+          <span class="spacer"></span>
+          <button class="btn sm ghost" data-act="answers">📝 Answers ›</button>
         </div>
         ${a.status === 'frozen' ? `
           <div class="freeze-box">${esc(a.freezeReason || 'Left the quiz')} · ${timeAgo(a.frozenAt)}</div>
@@ -646,9 +671,10 @@ async function renderMonitor(runId) {
   $('#students').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act]');
     const card = e.target.closest('[data-id]');
-    if (!b || !card) return;
+    if (!card) return;
     const a = attempts.get(card.dataset.id);
     if (!a) return;
+    if (!b || b.dataset.act === 'answers') return openSheet(a.id); // tap anywhere on the card = see answers
     if (b.dataset.act === 'resume') {
       socket.emit('unfreeze', { attemptId: a.id, mode: 'resume' });
       toast(`${a.name} can continue`);
@@ -694,15 +720,291 @@ async function renderMonitor(runId) {
     }
   }
 
+  // ================================================================ answers review
+  // Loaded on demand (only when a sheet or the Questions tab is open), refreshed when students change.
+  let ans = null;            // { questions, attempts } from /api/runs/:id/answers
+  let ansLoading = null;
+  let refreshTimer = null;
+  let activeTab = 'students';
+  let includeWriting = false;
+  let sortHard = false;
+  const expanded = new Set(); // question ids showing names
+  const L = (i) => String.fromCharCode(65 + i);
+
+  async function loadAnswers() {
+    if (!ansLoading) {
+      ansLoading = api('GET', `/api/runs/${quiz.id}/answers`)
+        .then((d) => { ans = d; return d; })
+        .finally(() => { ansLoading = null; });
+    }
+    return ansLoading;
+  }
+  function refreshAnswersSoon() {
+    if (!sheet && activeTab !== 'questions') { ans = null; return; } // reload lazily next time
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      try { await loadAnswers(); } catch { return; }
+      if (sheet) renderSheet();
+      if (activeTab === 'questions') renderQuestions();
+    }, 600);
+  }
+  async function setOverride(attemptId, qid, value) {
+    try {
+      await api('PUT', `/api/runs/${quiz.id}/attempts/${attemptId}/override`, { qid, value });
+      await loadAnswers();
+      if (sheet) renderSheet();
+      if (activeTab === 'questions') renderQuestions();
+      toast(value === null ? 'Back to automatic marking' : value ? 'Marked correct ✓' : 'Marked wrong ✗');
+    } catch (e) { toast(e.message, 'danger'); }
+  }
+
+  // ---- Students | Questions switch
+  $('#viewSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-v]');
+    if (!b || b.dataset.v === activeTab) return;
+    activeTab = b.dataset.v;
+    $$('#viewSeg button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', String(x === b)); });
+    $('#paneStudents').classList.toggle('hidden', activeTab !== 'students');
+    $('#paneQuestions').classList.toggle('hidden', activeTab !== 'questions');
+    if (activeTab === 'questions') renderQuestions();
+  });
+
+  // ---- one student's answer sheet (stays open; previous / next student)
+  let sheet = null; // { el, attemptId }
+  function openSheet(attemptId) {
+    closeSheet();
+    const bg = document.createElement('div');
+    bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal ans-sheet" role="dialog" aria-modal="true" aria-label="Student answers"></div>';
+    bg.addEventListener('click', onSheetClick);
+    document.body.appendChild(bg);
+    document.addEventListener('keydown', onSheetKey);
+    sheet = { el: bg, attemptId };
+    renderSheet();
+  }
+  function closeSheet() {
+    if (!sheet) return;
+    sheet.el.remove();
+    document.removeEventListener('keydown', onSheetKey);
+    sheet = null;
+  }
+  function onSheetKey(e) {
+    if (e.key === 'Escape') closeSheet();
+    if (e.key === 'ArrowRight') stepSheet(1);
+    if (e.key === 'ArrowLeft') stepSheet(-1);
+  }
+  const sheetOrder = () => (ans ? ans.attempts.slice().sort((a, b) => a.name.localeCompare(b.name)) : []);
+  function stepSheet(d) {
+    const order = sheetOrder();
+    const i = order.findIndex((x) => x.id === sheet?.attemptId);
+    const next = order[i + d];
+    if (next) { sheet.attemptId = next.id; renderSheet(); sheet.el.querySelector('.modal').scrollTop = 0; }
+  }
+  function onSheetClick(e) {
+    if (e.target === sheet.el) return closeSheet();
+    const b = e.target.closest('[data-sh]');
+    if (!b) return;
+    const act = b.dataset.sh;
+    if (act === 'close') closeSheet();
+    if (act === 'prev') stepSheet(-1);
+    if (act === 'next') stepSheet(1);
+    if (act === 'ok' || act === 'bad' || act === 'auto') setOverride(sheet.attemptId, b.dataset.q, act === 'auto' ? null : act === 'ok');
+  }
+
+  async function renderSheet() {
+    if (!sheet) return;
+    const box = sheet.el.querySelector('.modal');
+    if (!ans) {
+      box.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+      try { await loadAnswers(); } catch (e) { box.innerHTML = `<p>${esc(e.message)}</p>`; return; }
+      if (!sheet) return;
+    }
+    const a = ans.attempts.find((x) => x.id === sheet.attemptId);
+    if (!a) { closeSheet(); return toast('That student is no longer in this session.'); }
+    const order = sheetOrder();
+    const pos = order.findIndex((x) => x.id === a.id);
+    const done = a.status === 'submitted';
+    const pct = a.maxScore ? Math.round((a.score / a.maxScore) * 100) : 0;
+    const right = ans.questions.filter((q) => a.marks[q.id]?.correct).length;
+
+    box.innerHTML = `
+      <div class="sheet-top">
+        <button class="btn ghost icon" data-sh="close" aria-label="Close">✕</button>
+        <span class="muted small">${pos + 1} of ${order.length}</span>
+        <span class="spacer"></span>
+        <button class="btn sm" data-sh="prev" ${pos <= 0 ? 'disabled' : ''}>‹ Prev</button>
+        <button class="btn sm" data-sh="next" ${pos >= order.length - 1 ? 'disabled' : ''}>Next ›</button>
+      </div>
+      <h2 style="margin:6px 0 2px">${esc(a.name)}</h2>
+      <div class="muted small">${esc(a.studentId)}${a.attemptNo > 1 ? ` · attempt ${a.attemptNo}` : ''} ·
+        ${done ? '<span class="badge ok">Submitted</span>' : a.status === 'frozen' ? '<span class="badge danger">🔒 Frozen</span>' : '<span class="badge primary">Writing</span>'}</div>
+      <div class="ans-summary">
+        <div><b class="big-score">${a.score}<span class="muted">/${a.maxScore}</span></b><span class="muted small">${done ? pct + '%' : 'so far, in progress'}</span></div>
+        <div><b>${right}/${ans.questions.length}</b><span class="muted small">correct</span></div>
+        <div><b>${fmtTime(a.elapsedMs)}</b><span class="muted small">time taken</span></div>
+        <div><b style="${a.violations.length ? 'color:var(--danger)' : ''}">${a.violations.length}</b><span class="muted small">violation${a.violations.length === 1 ? '' : 's'}</span></div>
+      </div>
+      ${ans.questions.map((q, i) => answerBlock(q, i, a)).join('')}`;
+  }
+
+  function answerBlock(q, i, a) {
+    const m = a.marks[q.id] || { chosen: null, correct: false, earned: 0, source: 'blank' };
+    const state = m.correct ? 'ok' : m.chosen ? 'bad' : 'blank';
+    const icon = m.correct ? '✓' : m.chosen ? '✗' : '—';
+    const tag = m.source === 'override' ? '<span class="badge warn">Marked by lecturer</span>'
+      : m.source === 'free' ? '<span class="badge primary">Free points (question voided)</span>' : '';
+    return `
+      <div class="ans-q ${state}">
+        <div class="ans-q-head">
+          <span class="ans-icon">${icon}</span>
+          <b>Q${i + 1}</b><span class="muted small">${m.earned}/${q.points} pt${q.points === 1 ? '' : 's'}</span>
+          <span class="spacer"></span>${tag}
+        </div>
+        <div class="ans-text">${esc(q.text)}</div>
+        <div class="opt-list">
+          ${q.options.map((o, j) => {
+            const isKey = q.correctIds.includes(o.id);
+            const picked = m.chosen === o.id;
+            return `<div class="opt-row ${picked ? 'picked' : ''} ${isKey ? 'key' : ''}">
+              <span class="letter">${L(j)}</span><span class="otext">${esc(o.text)}</span>
+              ${picked ? `<span class="badge ${isKey ? 'ok' : 'danger'}">Their answer</span>` : ''}
+              ${isKey ? '<span class="badge ok">✓ Correct</span>' : ''}
+            </div>`;
+          }).join('')}
+          ${m.chosen ? '' : '<div class="muted small" style="padding:4px 2px">Not answered</div>'}
+        </div>
+        ${q.freePoints ? '' : `
+        <div class="ans-actions">
+          <button class="btn sm ${m.source === 'override' && m.correct ? 'ok' : ''}" data-sh="ok" data-q="${q.id}">✓ Mark correct</button>
+          <button class="btn sm ${m.source === 'override' && !m.correct ? 'danger' : ''}" data-sh="bad" data-q="${q.id}">✗ Mark wrong</button>
+          ${m.source === 'override' ? `<button class="btn sm ghost" data-sh="auto" data-q="${q.id}">↺ Automatic</button>` : ''}
+        </div>`}
+      </div>`;
+  }
+
+  // ---- results by question
+  async function renderQuestions() {
+    const pane = $('#paneQuestions');
+    if (!ans) {
+      pane.innerHTML = '<div class="card empty"><div class="spinner"></div></div>';
+      try { await loadAnswers(); } catch (e) { pane.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return; }
+    }
+    const pool = ans.attempts.filter((a) => a.status === 'submitted' || includeWriting);
+    const writing = ans.attempts.filter((a) => a.status !== 'submitted').length;
+    const stats = ans.questions.map((q, i) => {
+      const right = pool.filter((a) => a.marks[q.id]?.correct);
+      const byOpt = q.options.map((o) => pool.filter((a) => a.marks[q.id]?.chosen === o.id));
+      const blank = pool.filter((a) => !a.marks[q.id]?.chosen);
+      return { q, i, right, byOpt, blank, pct: pool.length ? Math.round((right.length / pool.length) * 100) : null };
+    });
+    if (sortHard) stats.sort((x, y) => (x.pct ?? 101) - (y.pct ?? 101) || x.i - y.i);
+
+    const chip = (a) => `<button class="chip" data-open="${a.id}">${esc(a.name)}</button>`;
+    const chips = (list) => (list.length ? list.map(chip).join('') : '<span class="muted small">nobody</span>');
+    const tone = (p) => (p == null ? '' : p >= 70 ? 'ok' : p >= 40 ? 'warn' : 'danger');
+
+    pane.innerHTML = `
+      <div class="card qtools">
+        <label class="switch" style="padding:0;border:0"><span class="txt"><b>Include students still writing</b>
+          <small>${writing ? writing + ' not submitted yet' : 'Everyone has submitted'}</small></span><input type="checkbox" id="incW" ${includeWriting ? 'checked' : ''}></label>
+        <div class="row" style="margin-top:10px">
+          <span class="muted small">Sort:</span>
+          <button class="btn sm ${sortHard ? '' : 'on'}" data-sort="order">Quiz order</button>
+          <button class="btn sm ${sortHard ? 'on' : ''}" data-sort="hard">Hardest first</button>
+          <span class="spacer"></span>
+          <span class="muted small">Based on <b>${pool.length}</b> student${pool.length === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+      ${!pool.length ? `<div class="card empty"><div class="big">📊</div><p>${ans.attempts.length ? 'No one has submitted yet. Turn on “Include students still writing” to see live answers.' : 'No students yet.'}</p></div>` : ''}
+      ${stats.map(({ q, i, right, byOpt, blank, pct }) => `
+        <div class="card qstat" data-qid="${q.id}">
+          <div class="ans-q-head">
+            <span class="q-num">${i + 1}</span>
+            <span class="muted small">${q.points} pt${q.points === 1 ? '' : 's'}</span>
+            ${q.freePoints ? '<span class="badge primary">Free points for everyone</span>' : ''}
+            <span class="spacer"></span>
+            <button class="btn sm" data-key="${q.id}">✎ Correct answer</button>
+          </div>
+          <div class="ans-text">${esc(q.text)}</div>
+          ${pool.length ? `
+          <div class="qstat-big ${tone(pct)}"><b>${right.length} / ${pool.length}</b> answered correctly · <b>${pct}%</b></div>
+          <div class="bar big ${tone(pct)}"><i style="width:${pct}%"></i></div>
+          <div class="dist">
+            ${q.options.map((o, j) => {
+              const n = byOpt[j].length;
+              const isKey = q.correctIds.includes(o.id);
+              return `<div class="dist-row ${isKey ? 'key' : ''}">
+                <span class="letter">${L(j)}</span>
+                <span class="otext">${esc(o.text)} ${isKey ? '<b style="color:var(--ok)">✓</b>' : ''}</span>
+                <span class="dist-bar"><i style="width:${pool.length ? (n / pool.length) * 100 : 0}%"></i></span>
+                <b class="dist-n">${n}</b>
+              </div>`;
+            }).join('')}
+            <div class="dist-row"><span class="letter">—</span><span class="otext muted">Not answered</span>
+              <span class="dist-bar"><i style="width:${pool.length ? (blank.length / pool.length) * 100 : 0}%"></i></span><b class="dist-n">${blank.length}</b></div>
+          </div>
+          <button class="btn sm ghost" data-names="${q.id}" style="margin-top:6px">${expanded.has(q.id) ? 'Hide names ▴' : 'Who answered what ▾'}</button>
+          ${expanded.has(q.id) ? `
+          <div class="names">
+            <div class="names-h ok">✓ Correct (${right.length})</div><div class="chips">${chips(right)}</div>
+            ${q.options.map((o, j) => (q.correctIds.includes(o.id) || !byOpt[j].length ? ''
+              : `<div class="names-h bad">✗ Chose ${L(j)}. ${esc(o.text)} (${byOpt[j].length})</div><div class="chips">${chips(byOpt[j].filter((a) => !a.marks[q.id].correct))}</div>`)).join('')}
+            ${blank.length ? `<div class="names-h">— Not answered (${blank.length})</div><div class="chips">${chips(blank.filter((a) => !a.marks[q.id].correct))}</div>` : ''}
+          </div>` : ''}` : ''}
+        </div>`).join('')}`;
+  }
+
+  $('#paneQuestions').addEventListener('change', (e) => {
+    if (e.target.id === 'incW') { includeWriting = e.target.checked; renderQuestions(); }
+  });
+  $('#paneQuestions').addEventListener('click', (e) => {
+    const t = e.target.closest('[data-sort],[data-names],[data-open],[data-key]');
+    if (!t) return;
+    if (t.dataset.sort) { sortHard = t.dataset.sort === 'hard'; renderQuestions(); }
+    if (t.dataset.names) { expanded.has(t.dataset.names) ? expanded.delete(t.dataset.names) : expanded.add(t.dataset.names); renderQuestions(); }
+    if (t.dataset.open) openSheet(t.dataset.open);
+    if (t.dataset.key) editKey(t.dataset.key);
+  });
+
+  // Change the answer key for this session, then everyone is re-scored
+  async function editKey(qid) {
+    const q = ans.questions.find((x) => x.id === qid);
+    const i = ans.questions.indexOf(q);
+    const r = await modal(`
+      <h2>Correct answer for Q${i + 1}</h2>
+      <p class="muted small" style="margin-bottom:10px">${esc(q.text)}</p>
+      <p class="small"><b>Tick every answer that should count as correct:</b></p>
+      ${q.options.map((o, j) => `
+        <label class="choice"><input type="checkbox" name="kc" value="${o.id}" ${q.correctIds.includes(o.id) ? 'checked' : ''}>
+          <b>${L(j)}.</b> ${esc(o.text)}</label>`).join('')}
+      <div class="card" style="box-shadow:none;padding:4px 14px">
+        <label class="switch"><span class="txt"><b>Give everyone the points</b><small>Use when the question was wrong or unclear</small></span><input type="checkbox" id="kFree" ${q.freePoints ? 'checked' : ''}></label>
+        <label class="switch"><span class="txt"><b>Also fix the saved quiz</b><small>So future sessions use this answer too</small></span><input type="checkbox" id="kQuiz" checked></label>
+      </div>
+      <p class="muted small">Everyone in this session is re-scored straight away. Students who already see their score get the new one.</p>
+      <div class="row end"><button class="btn" data-value="cancel">Cancel</button><button class="btn primary" data-value="save">Save &amp; re-score</button></div>`);
+    if (r?.value !== 'save') return;
+    const correctIds = $$('input[name=kc]:checked', r.root).map((x) => x.value);
+    const freePoints = $('#kFree', r.root).checked;
+    if (!correctIds.length && !freePoints) return toast('Tick at least one correct answer (or give everyone the points).', 'danger');
+    try {
+      const res = await api('PUT', `/api/runs/${quiz.id}/questions/${qid}/key`, { correctIds, freePoints, applyToQuiz: $('#kQuiz', r.root).checked });
+      toast(`Saved. ${res.rescored} student score${res.rescored === 1 ? '' : 's'} changed${res.quizUpdated ? ', and the saved quiz is updated' : ''}.`);
+      await loadAnswers();
+      renderQuestions();
+      if (sheet) renderSheet();
+    } catch (e) { toast(e.message, 'danger'); }
+  }
+
   // ---- live connection
   const socket = io({ auth: { role: 'host', runId: quiz.id } });
   socket.on('attempts', (list) => { attempts.clear(); list.forEach((a) => attempts.set(a.id, a)); renderStudents(); });
   socket.on('attempt', (a) => {
-    const first = !attempts.has(a.id);
     attempts.set(a.id, a);
     renderStudents();
+    refreshAnswersSoon();
   });
-  socket.on('removed', (id) => { attempts.delete(id); renderStudents(); });
+  socket.on('removed', (id) => { attempts.delete(id); renderStudents(); refreshAnswersSoon(); });
   socket.on('alert', ({ name, reason }) => {
     toast(`🔒 ${name} — ${reason}`, 'danger');
     beep();
@@ -720,7 +1022,7 @@ async function renderMonitor(runId) {
       }
     }
   }, 1000);
-  cleanup = () => { socket.disconnect(); clearInterval(tick); };
+  cleanup = () => { socket.disconnect(); clearInterval(tick); clearTimeout(refreshTimer); closeSheet(); };
 }
 
 function copy(text, msg) {

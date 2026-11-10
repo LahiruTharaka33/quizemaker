@@ -50,13 +50,19 @@ function sanitizeQuiz(input) {
       const options = (Array.isArray(q.options) ? q.options : [])
         .map((o) => ({ id: clean(o.id, 40) || id(6), text: clean(o.text, 500) }))
         .filter((o) => o.text);
-      const correct = options.find((o) => o.id === q.correct) ? q.correct : options[0]?.id;
+      // One or more correct options (older data has only `correct`)
+      const valid = new Set(options.map((o) => o.id));
+      let correctIds = (Array.isArray(q.correctIds) ? q.correctIds : [q.correct]).filter((cid) => valid.has(cid));
+      correctIds = [...new Set(correctIds)];
+      if (!correctIds.length && options[0]) correctIds = [options[0].id];
       return {
         id: clean(q.id, 40) || id(6),
         text: clean(q.text, 2000),
         points: Math.max(0, Math.min(100, Number(q.points) || 1)),
         options,
-        correct,
+        correct: correctIds[0],
+        correctIds,
+        freePoints: !!q.freePoints, // question voided: everyone gets the points
       };
     })
     .filter((q) => q.text && q.options.length >= 2);
@@ -94,15 +100,45 @@ function remaining(a, quiz) {
   return Math.max(0, quiz.timeLimitMin * 60000 - elapsed(a));
 }
 
+const correctSet = (q) => (Array.isArray(q.correctIds) && q.correctIds.length ? q.correctIds : [q.correct]);
+
+// How one question is marked for one student.
+// source: 'free' (question voided), 'override' (lecturer marked it), 'key' (answer key), 'blank'
+function markQuestion(q, a) {
+  const chosen = a.answers[q.id] || null;
+  const ov = a.overrides ? a.overrides[q.id] : undefined;
+  let correct;
+  let source;
+  if (q.freePoints) { correct = true; source = 'free'; }
+  else if (ov === true || ov === false) { correct = ov; source = 'override'; }
+  else if (!chosen) { correct = false; source = 'blank'; }
+  else { correct = correctSet(q).includes(chosen); source = 'key'; }
+  return { chosen, correct, earned: correct ? q.points : 0, source };
+}
+
 function grade(a, quiz) {
   let score = 0;
   let max = 0;
   for (const q of quiz.questions) {
     max += q.points;
-    if (a.answers[q.id] && a.answers[q.id] === q.correct) score += q.points;
+    score += markQuestion(q, a).earned;
   }
   a.score = score;
   a.maxScore = max;
+}
+
+// Re-score everyone who has finished (after the key changed or a mark was overridden)
+function regrade(run, onlyAttempt) {
+  let n = 0;
+  for (const a of onlyAttempt ? [onlyAttempt] : attemptsOf(run.id)) {
+    if (a.status !== 'submitted') continue;
+    const before = a.score;
+    grade(a, run);
+    push(a); // lecturer monitor + student's own result screen update live
+    if (a.score !== before) n++;
+  }
+  save();
+  return n;
 }
 
 // What the student is allowed to see (never the correct answers).
@@ -604,20 +640,96 @@ app.delete('/api/runs/:id', runAuth, (req, res) => {
 app.get('/api/runs/:id/results.csv', runAuth, (req, res) => {
   const r = req.run;
   const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const rows = [['Name', 'Student ID', 'Status', 'Score', 'Max', 'Answered', 'Attempt #', 'Violations', 'Started', 'Submitted']];
+  const letter = (q, oid) => {
+    const i = q.options.findIndex((o) => o.id === oid);
+    return i < 0 ? '' : String.fromCharCode(65 + i) + '. ' + q.options[i].text;
+  };
+  const head = ['Name', 'Student ID', 'Status', 'Score', 'Max', 'Answered', 'Attempt #', 'Violations', 'Started', 'Submitted'];
+  r.questions.forEach((q, i) => head.push(`Q${i + 1} answer`, `Q${i + 1} mark`));
+  const rows = [head];
   for (const a of attemptsOf(r.id)) {
     if (a.status === 'submitted') grade(a, r);
-    rows.push([
+    const row = [
       a.name, a.studentId, a.status, a.score ?? '', a.maxScore ?? '', Object.keys(a.answers).length, a.attemptNo,
       a.violations.filter((v) => !v.system).map((v) => v.type).join('; '),
       a.startedAt ? new Date(a.startedAt).toISOString() : '', a.submittedAt ? new Date(a.submittedAt).toISOString() : '',
-    ]);
+    ];
+    for (const q of r.questions) {
+      const m = markQuestion(q, a);
+      const tag = m.source === 'override' ? ' (lecturer)' : m.source === 'free' ? ' (free)' : '';
+      row.push(m.chosen ? letter(q, m.chosen) : '', (m.correct ? 'correct' : m.chosen ? 'wrong' : 'blank') + tag);
+    }
+    rows.push(row);
   }
   const day = new Date(r.startedAt).toISOString().slice(0, 10);
   const fname = ((r.title + (r.label ? '_' + r.label : '')).replace(/[^\w-]+/g, '_').slice(0, 60) || 'quiz') + '_' + day;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}_results.csv"`);
   res.send('﻿' + rows.map((row) => row.map(esc).join(',')).join('\r\n'));
+});
+
+// ---- Answers review (lecturer only): every student's answers, marked per question
+app.get('/api/runs/:id/answers', runAuth, (req, res) => {
+  const r = req.run;
+  res.json({
+    questions: r.questions.map((q) => ({
+      id: q.id, text: q.text, points: q.points, options: q.options, correctIds: correctSet(q), freePoints: !!q.freePoints,
+    })),
+    attempts: attemptsOf(r.id).map((a) => {
+      if (a.status === 'submitted') grade(a, r);
+      const marks = {};
+      let earned = 0;
+      let max = 0;
+      for (const q of r.questions) { const m = markQuestion(q, a); marks[q.id] = m; earned += m.earned; max += q.points; }
+      return {
+        id: a.id, name: a.name, studentId: a.studentId, status: a.status, attemptNo: a.attemptNo,
+        score: earned, maxScore: max, // live "so far" score for students still writing
+        marks, startedAt: a.startedAt, submittedAt: a.submittedAt, elapsedMs: elapsed(a),
+        violations: a.violations.filter((v) => !v.system).map((v) => ({ type: v.type, at: v.at })),
+      };
+    }),
+  });
+});
+
+// Change a question's answer key for this session (and optionally the saved quiz), then re-score
+app.put('/api/runs/:id/questions/:qid/key', runAuth, (req, res) => {
+  const r = req.run;
+  const q = r.questions.find((x) => x.id === req.params.qid);
+  if (!q) return res.status(404).json({ error: 'Question not found' });
+  const valid = new Set(q.options.map((o) => o.id));
+  const correctIds = [...new Set((Array.isArray(req.body?.correctIds) ? req.body.correctIds : []).filter((x) => valid.has(x)))];
+  const freePoints = !!req.body?.freePoints;
+  if (!correctIds.length && !freePoints) return res.status(400).json({ error: 'Pick at least one correct answer.' });
+  if (correctIds.length) { q.correctIds = correctIds; q.correct = correctIds[0]; }
+  q.freePoints = freePoints;
+  let quizUpdated = false;
+  if (req.body?.applyToQuiz) {
+    const saved = db.quizzes[r.quizId];
+    const sq = saved && saved.questions.find((x) => x.id === q.id);
+    if (sq) {
+      if (correctIds.length) { sq.correctIds = [...correctIds]; sq.correct = correctIds[0]; }
+      sq.freePoints = freePoints;
+      saved.updatedAt = now();
+      quizUpdated = true;
+    }
+  }
+  const changed = regrade(r);
+  res.json({ ok: true, rescored: changed, quizUpdated });
+});
+
+// Lecturer marks one student's answer right/wrong by hand (value null = back to automatic)
+app.put('/api/runs/:id/attempts/:aid/override', runAuth, (req, res) => {
+  const a = db.attempts[req.params.aid];
+  if (!a || a.runId !== req.run.id) return res.status(404).json({ error: 'Student not found' });
+  const q = req.run.questions.find((x) => x.id === req.body?.qid);
+  if (!q) return res.status(404).json({ error: 'Question not found' });
+  const value = req.body?.value;
+  a.overrides ||= {};
+  if (value === true || value === false) a.overrides[q.id] = value;
+  else delete a.overrides[q.id];
+  if (a.status === 'submitted') regrade(req.run, a);
+  else { io.to('host:' + a.runId).emit('attempt', hostView(a)); save(); }
+  res.json({ ok: true, mark: markQuestion(q, a), score: a.score, maxScore: a.maxScore });
 });
 
 // LAN addresses, so a lecturer on localhost still gets a join link phones can open

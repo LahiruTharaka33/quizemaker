@@ -14,6 +14,57 @@
     .run-row { display: flex; align-items: center; gap: 10px; padding: 12px 4px; border-top: 1px solid var(--border); text-decoration: none; color: inherit; }
     .run-row:first-of-type { border-top: 0; }
     .run-row:hover { background: var(--surface-2); border-radius: 10px; }
+    /* Students | Questions switch */
+    .seg { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border-radius: 12px; margin-bottom: 12px; }
+    .seg button { flex: 1; border: 0; background: transparent; font: inherit; font-weight: 700; color: var(--muted); padding: 10px; border-radius: 9px; cursor: pointer; min-height: 44px; }
+    .seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+    .st { cursor: pointer; }
+    .st-foot { align-items: center; }
+
+    /* answer sheet */
+    .modal.ans-sheet { max-width: 680px; max-height: 92dvh; padding-top: 10px; }
+    .sheet-top { position: sticky; top: -10px; z-index: 2; display: flex; align-items: center; gap: 8px; background: var(--surface); padding: 8px 0; margin: -2px 0 4px; border-bottom: 1px solid var(--border); }
+    .ans-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+    .ans-summary > div { background: var(--surface-2); border-radius: 12px; padding: 10px 6px; text-align: center; display: flex; flex-direction: column; }
+    .ans-summary b { font-size: 1.15rem; }
+    .big-score { font-size: 1.5rem !important; }
+    @media (max-width: 420px) { .ans-summary { grid-template-columns: repeat(2, 1fr); } }
+    .ans-q { border: 1px solid var(--border); border-left-width: 5px; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+    .ans-q.ok { border-left-color: var(--ok); }
+    .ans-q.bad { border-left-color: var(--danger); }
+    .ans-q.blank { border-left-color: var(--border); }
+    .ans-q-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+    .ans-icon { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--surface-2); }
+    .ans-q.ok .ans-icon { background: var(--ok-soft); color: var(--ok); }
+    .ans-q.bad .ans-icon { background: var(--danger-soft); color: var(--danger); }
+    .ans-text { font-weight: 600; margin-bottom: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .opt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border-radius: 9px; font-size: .92rem; }
+    .opt-row .otext { flex: 1; min-width: 120px; overflow-wrap: anywhere; }
+    .opt-row.key { background: var(--ok-soft); }
+    .opt-row.picked:not(.key) { background: var(--danger-soft); }
+    .letter { width: 24px; height: 24px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); display: grid; place-items: center; font-weight: 800; font-size: .8rem; flex: none; }
+    .ans-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+    /* results by question */
+    .seg + #paneStudents, #paneQuestions { min-height: 120px; }
+    .tabs .btn.on, .qtools .btn.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .qstat-big { margin: 6px 0; font-size: .95rem; }
+    .qstat-big.ok b { color: var(--ok); } .qstat-big.warn b { color: var(--warn); } .qstat-big.danger b { color: var(--danger); }
+    .bar.big { height: 10px; margin: 4px 0 12px; }
+    .bar.ok > i { background: var(--ok); } .bar.warn > i { background: var(--warn); } .bar.danger > i { background: var(--danger); }
+    .dist-row { display: grid; grid-template-columns: 24px 1fr 30% 28px; align-items: center; gap: 8px; padding: 4px 0; font-size: .9rem; }
+    .dist-row .otext { overflow-wrap: anywhere; }
+    .dist-bar { height: 8px; background: var(--surface-2); border-radius: 9px; overflow: hidden; }
+    .dist-bar > i { display: block; height: 100%; background: var(--muted); border-radius: 9px; }
+    .dist-row.key .dist-bar > i { background: var(--ok); }
+    .dist-n { text-align: right; }
+    .names { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+    .names-h { font-weight: 700; font-size: .85rem; margin: 8px 0 4px; }
+    .names-h.ok { color: var(--ok); } .names-h.bad { color: var(--danger); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: .85rem; padding: 6px 12px; border-radius: 99px; cursor: pointer; min-height: 34px; }
+    .chip:hover { border-color: var(--primary); }
+
     .share.ended { opacity: .55; }
     .share.ended::before { content: "Session ended. Reopen it to let students join again, or start a new session from the quiz page."; grid-column: 1 / -1; font-size: .85rem; color: var(--muted); font-weight: 600; }
 

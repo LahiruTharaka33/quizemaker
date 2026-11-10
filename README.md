@@ -94,6 +94,22 @@ Notes:
 9. **End session** auto-submits everyone still writing or frozen, and the quiz stays saved for next time. **Reopen** lets the same code work again. **Results CSV** exports that session's marks.
 10. Log in on your phone to monitor and unlock students from there.
 
+**Reviewing answers** (in any live or past session)
+- **👥 Students:** tap a student (or **📝 Answers**) to see their sheet:
+  - score, number correct, time taken and violations
+  - every question with their answer next to the correct one, marked ✓ / ✗ / not answered
+  - **‹ Prev / Next ›** (or the arrow keys) to go through the class
+- **📊 Questions:** for each question:
+  - how many answered correctly (count and %), and how many picked each option
+  - **Who answered what** lists the names; tap a name to open that student's sheet
+  - sort by quiz order or hardest first. By default only submitted students are counted; switch on *Include students still writing* for live answers.
+- **Mark answers yourself:**
+  - **✎ Correct answer** on a question changes the key for this session. You can tick several correct options, or **give everyone the points** for a faulty question. Everyone is re-scored instantly, and you can also fix the saved quiz for future sessions.
+  - **✓ Mark correct / ✗ Mark wrong** on one student's answer overrides it for that student. It shows *Marked by lecturer*, and **↺ Automatic** undoes it.
+  - Students who can see their score get the updated one live.
+- In the builder you can mark **more than one correct answer** per question.
+- **Results CSV** includes each student's answer and mark for every question.
+
 Quizzes created before sessions existed are converted automatically on first start. Each quiz becomes a saved quiz, and its students and results move into a session with the same join code.
 
 **Student**: open the link, enter a name and student ID, then tap start. The quiz goes full screen, shows one question per screen with big tap targets, and has a question strip and a timer.
