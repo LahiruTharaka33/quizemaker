@@ -117,6 +117,15 @@ Notes:
 - In the builder you can mark **more than one correct answer** per question.
 - **Results CSV** includes each student's answer and mark for every question.
 
+**Downloads (Excel / CSV)**
+- **Quiz page → ⬇ Download questions & answers: 📗 Excel / 📄 CSV.** One row per question: the question, options A, B, C…, the correct answer letter(s) and text, and the points. In Excel the correct options are highlighted green, and a second sheet *Quiz info* has the title, time limit and settings.
+- **Session → 📗 Results Excel.** One workbook with three sheets:
+  - **Summary:** each student's score, %, number correct, answered, time taken, violations, start/submit time, plus the class average
+  - **Answers:** a grid of students × questions showing each answer; green = correct, red = wrong, grey = not answered, with lecturer marks labelled
+  - **Questions:** each question's correct answer(s), how many got it right (%), and how many chose each option (submitted students)
+- **📄 CSV** is the same data in a single sheet.
+- CSV cells that start with `= + - @` are made safe, so a student can't plant an Excel formula in a name or answer.
+
 Quizzes created before sessions existed are converted automatically on first start. Each quiz becomes a saved quiz, and its students and results move into a session with the same join code.
 
 **Student**: open the link, enter a name and student ID, then tap start. The quiz goes full screen, shows one question per screen with big tap targets, and has a question strip and a timer.
@@ -145,6 +154,8 @@ To *prevent* (not just detect) leaving, you would need native apps: Android "scr
 ```
 server.js              Express + Socket.IO server, accounts, freeze logic
 storage.js             Persistence: PostgreSQL (changed rows only) or data.json
+downloads.js           Excel/CSV downloads (quiz questions + key, session results workbook)
+public/present.html    Big QR page for a projector (/present/CODE)
 .env.example           Settings template (copy to .env)
 public/index.html      Landing page (join by code / lecturer)
 public/lecturer.html   Lecturer app (list, builder, live monitor)

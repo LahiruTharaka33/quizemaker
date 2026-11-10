@@ -685,9 +685,29 @@ app.delete('/api/runs/:id', runAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Downloads (Excel / CSV)
+const downloads = require('./downloads')({ correctSet, markQuestion, attemptsOf, elapsed });
+function sendFile(res, { name, body }, type) {
+  res.setHeader('Content-Type', type);
+  res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/[^w.-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(Buffer.isBuffer(body) ? body : Buffer.from(body));
+}
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const CSV = 'text/csv; charset=utf-8';
+// a saved quiz's questions + answer key
+app.get('/api/quizzes/:id/export.xlsx', hostAuth, async (req, res, next) => {
+  try { sendFile(res, await downloads.quizXlsx(req.quiz), XLSX); } catch (e) { next(e); }
+});
+app.get('/api/quizzes/:id/export.csv', hostAuth, (req, res) => sendFile(res, downloads.quizCsv(req.quiz), CSV));
+// a session's results workbook: Summary, Answers, Questions
+app.get('/api/runs/:id/results.xlsx', runAuth, async (req, res, next) => {
+  try { sendFile(res, await downloads.resultsXlsx(req.run), XLSX); } catch (e) { next(e); }
+});
+
 app.get('/api/runs/:id/results.csv', runAuth, (req, res) => {
   const r = req.run;
-  const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const esc = downloads.csvCell; // formula-safe when opened in Excel
   const letter = (q, oid) => {
     const i = q.options.findIndex((o) => o.id === oid);
     return i < 0 ? '' : String.fromCharCode(65 + i) + '. ' + q.options[i].text;

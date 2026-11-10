@@ -307,6 +307,11 @@ async function renderQuiz(quizId) {
         <button class="btn" id="dup" style="flex:1">⧉ Duplicate</button>
         <button class="btn ghost" id="del" title="Delete quiz">🗑</button>
       </div>
+      <div class="row dl-row" style="margin-bottom:16px">
+        <span class="muted small">⬇ Download questions &amp; answers:</span>
+        <a class="btn sm" href="/api/quizzes/${quiz.id}/export.xlsx" download>📗 Excel</a>
+        <a class="btn sm" href="/api/quizzes/${quiz.id}/export.csv" download>📄 CSV</a>
+      </div>
 
       ${live.length ? `<div class="card"><h3>Open now</h3>${live.map(runRow).join('')}</div>` : ''}
 
@@ -589,7 +594,8 @@ async function renderMonitor(runId) {
     $('#ctrl').innerHTML = `
       ${main}
       ${quiz.status !== 'closed' ? '<button class="btn danger" data-st="closed">■ End session</button>' : ''}
-      <a class="btn" href="/api/runs/${quiz.id}/results.csv">⬇ Results CSV</a>
+      <a class="btn" href="/api/runs/${quiz.id}/results.xlsx" download title="Summary, every student's answers, and question statistics">📗 Results Excel</a>
+      <a class="btn" href="/api/runs/${quiz.id}/results.csv" download>📄 CSV</a>
       <button class="btn ghost" id="delRun">🗑 Delete session</button>`;
     const banner = {
       waiting: '⏳ <b>Waiting room.</b> Students can join now. Nobody sees the questions until you press <b>▶ Start quiz</b>.',
