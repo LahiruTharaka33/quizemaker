@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f46e5">
+  <title>QuizLock · Lecturer</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .quiz-item { display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit; }
+    .quiz-item .meta { flex: 1; min-width: 0; }
+    .quiz-item h3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0 0 4px; }
+
+    /* builder */
+    .q-card { position: relative; }
+    .q-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .q-num { width: 30px; height: 30px; border-radius: 9px; background: var(--primary-soft); color: var(--primary); display: grid; place-items: center; font-weight: 800; font-size: .9rem; flex: none; }
+    .opt { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .opt input[type=text] { flex: 1; }
+    .opt .correct { appearance: none; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--border); flex: none; cursor: pointer; display: grid; place-items: center; }
+    .opt .correct:checked { background: var(--ok); border-color: var(--ok); }
+    .opt .correct:checked::after { content: "✓"; color: #fff; font-weight: 800; font-size: 14px; }
+    .pts { width: 76px !important; }
+    .save-bar { position: sticky; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); border-top: 1px solid var(--border); display: flex; gap: 10px; }
+    .save-bar .btn { flex: 1; }
+
+    /* monitor */
+    .share { display: grid; gap: 14px; grid-template-columns: 1fr; align-items: center; }
+    @media (min-width: 640px) { .share { grid-template-columns: 1fr auto; } }
+    .share .qr { width: 150px; height: 150px; background: #fff; border-radius: 12px; padding: 8px; justify-self: center; }
+    .code-big { font-size: 2rem; font-weight: 800; letter-spacing: .2em; }
+    .link-box { display: flex; gap: 8px; }
+    .link-box input { font-size: .85rem; }
+    .tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; scrollbar-width: none; }
+    .tabs button { flex: none; }
+    .tabs .btn.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .students { display: grid; gap: 10px; grid-template-columns: 1fr; }
+    @media (min-width: 900px) { .students { grid-template-columns: 1fr 1fr; } }
+    .st { margin: 0; padding: 14px; }
+    .st.frozen { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+    .st-top { display: flex; align-items: center; gap: 10px; }
+    .avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; font-weight: 700; flex: none; position: relative; }
+    .avatar .on { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--surface); background: var(--muted); }
+    .avatar .on.yes { background: var(--ok); }
+    .st-name { flex: 1; min-width: 0; }
+    .st-name b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bar { height: 6px; border-radius: 9px; background: var(--surface-2); overflow: hidden; margin: 12px 0 8px; }
+    .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 9px; transition: width .3s; }
+    .st-foot { display: flex; gap: 10px; flex-wrap: wrap; font-size: .82rem; color: var(--muted); }
+    .freeze-box { margin-top: 12px; padding: 10px 12px; background: var(--danger-soft); color: var(--danger); border-radius: 10px; font-size: .88rem; font-weight: 600; }
+    .st-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .st-actions .btn { flex: 1; }
+    .choice { display: block; border: 2px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; cursor: pointer; }
+    .choice:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+    .choice input { margin-right: 8px; accent-color: var(--primary); }
+    .log { list-style: none; padding: 0; margin: 0; font-size: .88rem; }
+    .log li { padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 10px; }
+    .log li.sys { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/"><span class="logo">🔒</span> QuizLock</a>
+    <span class="spacer"></span>
+    <span id="userBar"></span>
+  </header>
+  <main id="view"><div class="wrap"><div class="card empty"><div class="spinner"></div></div></div></main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/lecturer.js"></script>
+</body>
+</html>

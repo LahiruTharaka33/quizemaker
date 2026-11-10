@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f46e5">
+  <title>QuizLock</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .hero { text-align: center; padding: 40px 8px 24px; }
+    .hero .logo { width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 16px; display: grid; place-items: center; background: var(--primary); color: #fff; font-size: 32px; }
+    .code-input { text-transform: uppercase; letter-spacing: .3em; text-align: center; font-size: 1.4rem !important; font-weight: 700; }
+    .role { display: flex; gap: 14px; align-items: flex-start; }
+    .role .ic { font-size: 28px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="logo">🔒</div>
+      <h1>QuizLock</h1>
+      <p class="muted">Focused quizzes. Leave the quiz and it freezes until your lecturer lets you back in.</p>
+    </div>
+
+    <form class="card" id="joinForm">
+      <div class="role"><div class="ic">🎓</div><div><h2>Join a quiz</h2><p class="muted small">Enter the 6-character code from your lecturer, or just open the link they shared.</p></div></div>
+      <label class="field"><input class="code-input" id="code" type="text" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="ABC123" required></label>
+      <button class="btn primary block" type="submit">Join</button>
+    </form>
+
+    <div class="card">
+      <div class="role"><div class="ic">🧑‍🏫</div><div><h2>I'm a lecturer</h2><p class="muted small">Create quizzes, share a link, watch students live and unlock frozen attempts.</p></div></div>
+      <a class="btn block" href="/lecturer">Open lecturer dashboard</a>
+    </div>
+  </div>
+  <script>
+    document.getElementById('joinForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const c = document.getElementById('code').value.trim().toUpperCase();
+      if (c) location.href = '/q/' + encodeURIComponent(c);
+    });
+  </script>
+</body>
+</html>

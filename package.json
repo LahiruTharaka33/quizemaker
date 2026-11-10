@@ -1,0 +1,17 @@
+{
+  "name": "quiz-platform",
+  "version": "1.0.0",
+  "description": "Locked-down quiz platform: lecturers build quizzes, students join by link, leaving the quiz freezes it until the lecturer resumes or restarts it.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "nodemailer": "^6.10.1",
+    "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1"
+  }
+}
