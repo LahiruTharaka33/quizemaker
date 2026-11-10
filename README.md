@@ -19,6 +19,7 @@ npm start
 | `PORT` | Port to listen on (default 3000) |
 | `DATA_FILE` | JSON file used when there's no `DATABASE_URL` (default `./data.json`) |
 | `DB_TABLE` | Table name in Postgres (default `ql_records`) |
+| `TRUST_PROXY` | Number of proxies in front of the app. Set automatically on Render/Vercel; set it yourself behind Nginx etc. |
 | `INVITE_CODE` | If set, the code is needed to **create** a lecturer account, so random people can't sign up. Share it with your lecturers. |
 | `APP_URL` | Public address of the site, e.g. `https://quiz.example.edu`. Used in reset-email links. **Set it in production.** |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_SECURE` | Mail server for password-reset emails (e.g. Gmail with an app password, Outlook, SendGrid, Brevo). Without `SMTP_HOST`, reset links are **printed in the server console** instead. |
@@ -29,6 +30,21 @@ Gmail example (needs 2-step verification and an [app password](https://myaccount
 ```bash
 APP_URL=https://quiz.example.edu SMTP_HOST=smtp.gmail.com SMTP_PORT=465 SMTP_USER=you@gmail.com SMTP_PASS="app password" SMTP_FROM="QuizLock <you@gmail.com>" npm start
 ```
+
+## Deploy on Render (recommended)
+QuizLock needs **one always-on server**: it keeps live quiz state in memory and holds open connections to every student. Serverless hosts like Vercel aren't a good fit, because they run several short-lived copies and pause them between requests. That breaks the live monitor, the timers and saving.
+
+1. Push this repo to GitHub, which is already done.
+2. In [Render](https://dashboard.render.com), choose **New → Blueprint**, pick the `quizemaker` repo, and Render reads `render.yaml`.
+3. When asked for **`DATABASE_URL`**, paste your Neon connection string, then click **Apply**.
+4. Open `https://<service-name>.onrender.com`. Join links and reset emails use this address automatically (`RENDER_EXTERNAL_URL`). For a custom domain, set `APP_URL`.
+5. Optional, under **Environment**: `INVITE_CODE` and `SMTP_*`.
+
+Notes:
+- **Free plan:** the service sleeps after 15 minutes with no visitors, and the first visit afterwards takes about 30–60 s to wake it. A running quiz keeps it awake. For lectures, the **Starter** plan stays always on.
+- Every push to `main` redeploys. While it restarts, students see "reconnecting…" for a moment. Their answers are already saved and the quiz picks up again.
+- **Run only one server per database.** Don't run a second copy (such as Vercel, or a local `npm start`) against the same `DATABASE_URL`. For local testing, use a separate Neon branch.
+- `GET /healthz` is the health check Render uses.
 
 ## Database (PostgreSQL / Neon)
 - With `DATABASE_URL` set, everything is stored in one table, `ql_records (kind, id, data jsonb, updated_at)`. There is one row per quiz, student attempt, lecturer, login session and reset link. The server creates the table itself on first start.

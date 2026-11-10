@@ -1,0 +1,22 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# In Render: New → Blueprint → pick this GitHub repo. You'll be asked for DATABASE_URL.
+services:
+  - type: web
+    name: quizemaker
+    runtime: node
+    region: virginia          # same area as the Neon database (AWS us-east-1) for fast saves
+    plan: free                # free sleeps after 15 min idle; "starter" stays always on
+    numInstances: 1           # QuizLock must run as ONE instance per database
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true          # redeploy on every push to main
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL     # paste your Neon connection string when Render asks
+        sync: false
+      # Optional — add in the Render dashboard (Environment tab) when you need them:
+      #   APP_URL      custom domain, e.g. https://quiz.example.edu (defaults to the onrender.com address)
+      #   INVITE_CODE  only people with this code can create lecturer accounts
+      #   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM  for password-reset emails

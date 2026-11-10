@@ -232,6 +232,10 @@ function unfreeze(a, mode, opts = {}) {
 
 // ---------------------------------------------------------------- app
 const app = express();
+// Behind a hosting proxy (Render, Vercel, Nginx…) use the client address it forwards, so rate limits
+// and Secure cookies work. Override with TRUST_PROXY (e.g. 2 for two proxies, false to disable).
+const tp = process.env.TRUST_PROXY;
+app.set('trust proxy', tp != null ? (/^\d+$/.test(tp) ? Number(tp) : tp === 'true') : !!(process.env.RENDER || process.env.VERCEL) && 1);
 const server = http.createServer(app);
 const io = new Server(server, { pingInterval: 10000, pingTimeout: 8000 });
 
@@ -290,6 +294,7 @@ function noteFailure(key) {
 // Public address used in join links and reset emails. On Vercel, falls back to the production domain
 // (so links never point at a preview/branch URL like project-git-main-….vercel.app).
 const APP_URL = (process.env.APP_URL
+  || process.env.RENDER_EXTERNAL_URL // set automatically by Render, e.g. https://quizemaker.onrender.com
   || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? 'https://' + process.env.VERCEL_PROJECT_PRODUCTION_URL : '')
 ).replace(/\/+$/, '');
 const SMTP = process.env.SMTP_HOST ? {
@@ -332,9 +337,9 @@ async function sendResetEmail(user, link) {
 
 app.post('/api/auth/forgot', async (req, res) => {
   const email = normEmail(req.body?.email);
-  const key = 'forgot|' + req.ip;
+  const key = 'forgot|' + req.ip + '|' + email;
   if (tooManyFailures(key)) return res.status(429).json({ error: 'Too many requests. Try again in 15 minutes.' });
-  noteFailure(key); // counts every request: max 8 per IP per 15 minutes
+  noteFailure(key); // counts every request: max 8 per IP and email per 15 minutes
   const user = Object.values(db.users).find((u) => u.email === email);
   if (user) {
     for (const [h, r] of Object.entries(db.resets)) if (r.userId === user.id) delete db.resets[h]; // only the newest link works
@@ -368,7 +373,8 @@ app.post('/api/auth/reset', (req, res) => {
   setPassword(user, password);
   delete db.resets[sha(token)]; // single use
   endSessions(user.id);         // log out every device
-  for (const k of failures.keys()) if (k.endsWith('|' + user.email)) failures.delete(k);
+  // lift the wrong-password login lockout (keys "ip|email"), but keep the reset-request limit
+  for (const k of failures.keys()) if (k.endsWith('|' + user.email) && !k.startsWith('forgot|')) failures.delete(k);
   startSession(req, res, user);
   res.json(publicUser(user));
 });
@@ -532,6 +538,9 @@ app.get('/api/quizzes/:id/results.csv', hostAuth, (req, res) => {
 const lanIps = () => Object.values(os.networkInterfaces()).flat()
   .filter((i) => i && i.family === 'IPv4' && !i.internal && !/^169\.254\./.test(i.address))
   .map((i) => i.address);
+// Health check for the host (Render pings this before sending traffic / to detect a dead server)
+app.get('/healthz', (req, res) => res.json({ ok: true, storage: storage.kind.split(' ')[0], uptime: Math.round(process.uptime()) }));
+
 app.get('/api/net', (req, res) => res.json({ ips: lanIps(), appUrl: APP_URL }));
 
 app.get('/api/qr', async (req, res) => {
