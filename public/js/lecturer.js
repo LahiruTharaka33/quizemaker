@@ -317,7 +317,7 @@ async function renderQuiz(quizId) {
 
       <div class="card">
         <h3>Past sessions</h3>
-        ${past.length ? past.map(runRow).join('') : '<p class="muted small" style="margin:0">Not used yet. Press <b>Start quiz now</b> whenever you\'re ready, today or any later day.</p>'}
+        ${past.length ? past.map(runRow).join('') : '<p class="muted small" style="margin:0">Not used yet. Press <b>▶ Run this quiz</b> whenever you\'re ready, today or any later day. Students wait until you press Start.</p>'}
       </div>
 
       <details class="card">
@@ -526,6 +526,9 @@ async function renderMonitor(runId) {
   const joinUrl = `${origin}/q/${quiz.code}`;
 
   const attempts = new Map();
+  const versions = new Map(); // attempt id -> server data as received (a card is only rebuilt when this changes)
+  const cardEls = new Map();  // attempt id -> { el, v } cards currently on screen
+  const track = (a) => { attempts.set(a.id, a); versions.set(a.id, JSON.stringify(a)); };
   let filter = 'all';
   let search = '';
 
@@ -581,10 +584,18 @@ async function renderMonitor(runId) {
       <div style="height:30px"></div>
     </div>`;
 
+  let ctrlFor = null; // status the buttons were last drawn for
   function renderControls() {
+    const waiting = [...attempts.values()].filter((x) => x.status === 'waiting').length;
+    // Same status: keep the buttons (so a tap isn't lost) and only refresh the "N waiting" number.
+    if (ctrlFor === quiz.status) {
+      const pill = $('#ctrl .pill');
+      if (pill) pill.textContent = `${waiting} waiting`;
+      return;
+    }
+    ctrlFor = quiz.status;
     $('#statusB').innerHTML = runBadge(quiz.status);
     $('.share').classList.toggle('ended', quiz.status === 'closed');
-    const waiting = [...attempts.values()].filter((x) => x.status === 'waiting').length;
     const main = {
       waiting: `<button class="btn ok go-big" data-st="open">▶ Start quiz <span class="pill">${waiting} waiting</span></button>`,
       open: '<button class="btn" data-st="paused">⏸ Pause</button>',
@@ -669,10 +680,33 @@ async function renderMonitor(runId) {
     const box = $('#students');
     if (!list.length) {
       box.innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="big">${all.length ? '🔍' : '👋'}</div><p>${all.length ? 'No students match.' : quiz.status === 'open' ? 'Waiting for students to join…' : 'This session has ended. No students joined.'}</p></div>`;
+      cardEls.clear();
       return;
     }
-    box.innerHTML = list.map(studentCard).join('');
-    if (quiz.status === 'waiting') renderControls(); // live "N waiting" on the Start button
+    // Update in place: only a student whose data changed gets a new card; order changes MOVE existing
+    // cards. Rebuilding every card on every answer made the lecturer's taps get lost during a busy class.
+    box.querySelector('.empty')?.remove();
+    const keep = new Set(list.map((a) => a.id));
+    for (const [id, c] of cardEls) if (!keep.has(id)) { c.el.remove(); cardEls.delete(id); }
+    list.forEach((a, i) => {
+      const v = versions.get(a.id);
+      let c = cardEls.get(a.id);
+      if (!c || c.v !== v) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = studentCard(a).trim();
+        const el = tmp.firstElementChild;
+        if (c) c.el.replaceWith(el);
+        c = { el, v };
+        cardEls.set(a.id, c);
+      }
+      if (box.children[i] !== c.el) box.insertBefore(c.el, box.children[i] || null);
+    });
+    tickLabels();
+    if (quiz.status === 'waiting') renderControls(); // only the "N waiting" number changes
+  }
+  // Time-based labels change by themselves, without rebuilding cards
+  function tickLabels() {
+    for (const el of document.querySelectorAll('[data-ago]')) el.textContent = timeAgo(+el.dataset.ago);
   }
 
   function studentCard(a) {
@@ -700,7 +734,7 @@ async function renderMonitor(runId) {
           <button class="btn sm ghost" data-act="answers">📝 Answers ›</button>
         </div>
         ${a.status === 'frozen' ? `
-          <div class="freeze-box">${esc(a.freezeReason || 'Left the quiz')} · ${timeAgo(a.frozenAt)}</div>
+          <div class="freeze-box">${esc(a.freezeReason || 'Left the quiz')} · <span data-ago="${a.frozenAt || 0}">${timeAgo(a.frozenAt)}</span></div>
           <div class="st-actions">
             <button class="btn ok" data-act="resume">▶ Continue</button>
             <button class="btn" data-act="unlock">↻ Restart / options</button>
@@ -1038,13 +1072,13 @@ async function renderMonitor(runId) {
 
   // ---- live connection
   const socket = io({ auth: { role: 'host', runId: quiz.id } });
-  socket.on('attempts', (list) => { attempts.clear(); list.forEach((a) => attempts.set(a.id, a)); renderStudents(); });
+  socket.on('attempts', (list) => { attempts.clear(); versions.clear(); list.forEach(track); renderStudents(); });
   socket.on('attempt', (a) => {
-    attempts.set(a.id, a);
+    track(a);
     renderStudents();
     refreshAnswersSoon();
   });
-  socket.on('removed', (id) => { attempts.delete(id); renderStudents(); refreshAnswersSoon(); });
+  socket.on('removed', (id) => { attempts.delete(id); versions.delete(id); renderStudents(); refreshAnswersSoon(); });
   socket.on('runStatus', (st) => { if (st !== quiz.status) { quiz.status = st; renderControls(); renderStudents(); } });
   socket.on('alert', ({ name, reason }) => {
     toast(`🔒 ${name} — ${reason}`, 'danger');
@@ -1062,6 +1096,7 @@ async function renderMonitor(runId) {
         if (el) el.textContent = '⏱ ' + fmtTime(a.remainingMs);
       }
     }
+    tickLabels();
   }, 1000);
   cleanup = () => { socket.disconnect(); clearInterval(tick); clearTimeout(refreshTimer); closeSheet(); };
 }
