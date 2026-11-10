@@ -23,7 +23,8 @@ function route() {
   if (parts[0] === 'register') { history.replaceState(null, '', '#/'); return renderList(); }
   if (parts[0] === 'new') return renderBuilder(null);
   if (parts[0] === 'edit' && parts[1]) return renderBuilder(parts[1]);
-  if (parts[0] === 'quiz' && parts[1]) return renderMonitor(parts[1]);
+  if (parts[0] === 'quiz' && parts[1]) return renderQuiz(parts[1]);   // saved quiz: start it, see past sessions
+  if (parts[0] === 'run' && parts[1]) return renderMonitor(parts[1]);  // one live/past session
   renderList();
 }
 window.addEventListener('hashchange', route);
@@ -218,20 +219,122 @@ async function renderList() {
   try { list = await api('GET', '/api/quizzes'); } catch (e) { return; }
   const items = $('#items');
   if (!list.length) {
-    items.innerHTML = '<div class="card empty"><div class="big">📝</div><p>No quizzes yet.</p><a class="btn primary" href="#/new">Create your first quiz</a></div>';
+    items.innerHTML = `<div class="card empty"><div class="big">📝</div><p><b>No saved quizzes yet.</b><br>Create a quiz once, then start it whenever you need it, as many times as you like.</p>
+      <a class="btn primary" href="#/new">Create your first quiz</a></div>`;
     return;
   }
   items.innerHTML = list.map((q) => `
-    <a class="card quiz-item" href="#/quiz/${q.id}">
-      <div class="meta"><h3>${esc(q.title)}</h3>
-        <div class="muted small">${statusBadge(q.status)} &nbsp;${q.questionCount} questions · ${q.attemptCount} students · code <b>${q.code}</b></div></div>
-      <span>›</span>
-    </a>`).join('');
+    <div class="card quiz-item" data-id="${q.id}">
+      <a class="meta" href="#/quiz/${q.id}" style="text-decoration:none;color:inherit">
+        <h3>${esc(q.title)}</h3>
+        <div class="muted small">
+          ${q.live.length ? `<span class="badge ok"><i class="dot"></i>Live${q.live.length > 1 ? ' ×' + q.live.length : ''}</span> ` : ''}
+          ${q.questionCount} question${q.questionCount === 1 ? '' : 's'}${q.timeLimitMin ? ' · ' + q.timeLimitMin + ' min' : ''}
+          · ${q.runCount ? `used ${q.runCount}× · last ${fmtDate(q.lastRunAt)}` : 'never started'}
+        </div>
+      </a>
+      ${q.live.length === 1
+        ? `<a class="btn sm ok" href="#/run/${q.live[0].id}">Open live</a>`
+        : `<button class="btn sm primary" data-start="${q.id}">▶ Start</button>`}
+    </div>`).join('');
+  items.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-start]');
+    if (b) startSession(b.dataset.start, list.find((q) => q.id === b.dataset.start)?.title);
+  });
 }
-function statusBadge(s) {
-  return s === 'open' ? '<span class="badge ok"><i class="dot"></i>Open</span>'
-    : s === 'closed' ? '<span class="badge">Closed</span>'
-    : '<span class="badge warn">Draft</span>';
+
+function fmtDate(t) {
+  if (!t) return '';
+  const d = new Date(t);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  return sameDay ? 'today ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+}
+function runBadge(s) {
+  return s === 'open' ? '<span class="badge ok"><i class="dot"></i>Live</span>' : '<span class="badge">Ended</span>';
+}
+
+// Start a saved quiz: creates a new session with its own join code
+async function startSession(quizId, title = 'this quiz') {
+  const r = await modal(`
+    <h2>Start “${esc(title)}”</h2>
+    <p class="muted small">Students get a new join code and link. Results are kept separately for this session.</p>
+    <label class="field"><span>Session name <span class="muted">(optional)</span></span>
+      <input type="text" id="runLabel" maxlength="80" placeholder="e.g. Group A, Tuesday 10am" autofocus></label>
+    <div class="row end"><button class="btn" data-value="cancel">Cancel</button><button class="btn ok" data-value="go">▶ Start now</button></div>`);
+  if (r?.value !== 'go') return;
+  try {
+    const run = await hostApi('POST', quizId, '/runs', { label: $('#runLabel', r.root).value.trim() });
+    toast('Quiz started — share the code ' + run.code);
+    location.hash = '#/run/' + run.id;
+  } catch (e) { toast(e.message, 'danger'); }
+}
+
+// ================================================================ saved quiz page
+async function renderQuiz(quizId) {
+  let quiz;
+  try { quiz = await hostApi('GET', quizId); } catch (e) {
+    view.innerHTML = `<div class="wrap"><div class="card empty"><div class="big">🤷</div><p>${esc(e.message)}</p><a class="btn" href="#/">Back</a></div></div>`;
+    return;
+  }
+  const live = quiz.runs.filter((r) => r.status === 'open');
+  const past = quiz.runs.filter((r) => r.status !== 'open');
+  const runRow = (r) => `
+    <a class="run-row" href="#/run/${r.id}">
+      <div style="flex:1;min-width:0">
+        <b>${r.label ? esc(r.label) : fmtDate(r.startedAt)}</b>
+        <div class="muted small">${r.label ? fmtDate(r.startedAt) + ' · ' : ''}code ${r.code} · ${r.studentCount} student${r.studentCount === 1 ? '' : 's'}${r.avgPct != null ? ` · avg ${r.avgPct}%` : ''}</div>
+      </div>
+      ${runBadge(r.status)}<span class="muted">›</span>
+    </a>`;
+
+  view.innerHTML = `
+    <div class="wrap">
+      <a href="#/" class="muted small" style="text-decoration:none">‹ My quizzes</a>
+      <h1 style="margin:6px 0 4px">${esc(quiz.title)}</h1>
+      <div class="muted small" style="margin-bottom:14px">${quiz.questions.length} question${quiz.questions.length === 1 ? "" : "s"} · ${quiz.timeLimitMin ? quiz.timeLimitMin + ' min' : 'no time limit'}
+        · saved ${fmtDate(quiz.updatedAt || quiz.createdAt)}</div>
+
+      <button class="btn ok block" id="start" style="min-height:54px;font-size:1.05rem;margin-bottom:10px">▶ Start quiz now</button>
+      <div class="row" style="margin-bottom:16px">
+        <a class="btn" href="#/edit/${quiz.id}" style="flex:1">✎ Edit</a>
+        <button class="btn" id="dup" style="flex:1">⧉ Duplicate</button>
+        <button class="btn ghost" id="del" title="Delete quiz">🗑</button>
+      </div>
+
+      ${live.length ? `<div class="card"><h3>Live now</h3>${live.map(runRow).join('')}</div>` : ''}
+
+      <div class="card">
+        <h3>Past sessions</h3>
+        ${past.length ? past.map(runRow).join('') : '<p class="muted small" style="margin:0">Not used yet. Press <b>Start quiz now</b> whenever you\'re ready, today or any later day.</p>'}
+      </div>
+
+      <details class="card">
+        <summary style="cursor:pointer;font-weight:700">Questions (${quiz.questions.length})</summary>
+        <ol style="padding-left:20px;margin:12px 0 0">
+          ${quiz.questions.map((q) => `<li style="margin-bottom:10px"><div>${esc(q.text)}</div>
+            <div class="muted small">${q.options.map((o) => (o.id === q.correct ? `<b style="color:var(--ok)">✓ ${esc(o.text)}</b>` : esc(o.text))).join(' · ')}</div></li>`).join('')}
+        </ol>
+      </details>
+      <p class="muted small">Editing the quiz only changes future sessions. Sessions already started keep the questions they began with.</p>
+    </div>`;
+
+  $('#start').onclick = () => startSession(quiz.id, quiz.title);
+  $('#dup').onclick = async () => {
+    try {
+      const r = await hostApi('POST', quiz.id, '/duplicate');
+      toast('Copy created');
+      location.hash = '#/edit/' + r.id;
+    } catch (e) { toast(e.message, 'danger'); }
+  };
+  $('#del').onclick = async () => {
+    const r = await modal(`<h2>Delete “${esc(quiz.title)}”?</h2>
+      <p class="muted">The saved quiz <b>and all ${quiz.runs.length} session${quiz.runs.length === 1 ? '' : 's'} with their student results</b> will be permanently deleted. This cannot be undone.</p>
+      <div class="row end"><button class="btn" data-value="no">Cancel</button><button class="btn danger" data-value="yes">Delete forever</button></div>`);
+    if (r?.value !== 'yes') return;
+    try { await hostApi('DELETE', quiz.id); toast('Quiz deleted'); location.hash = '#/'; } catch (e) { toast(e.message, 'danger'); }
+  };
 }
 
 // ================================================================ builder
@@ -245,11 +348,6 @@ async function renderBuilder(quizId) {
   let quiz;
   if (quizId) {
     try { quiz = await hostApi('GET', quizId); } catch (e) { return toast(e.message, 'danger'); }
-    if (quiz.attemptCount) {
-      toast('Students already joined — editing is locked. Duplicating instead.');
-      quiz = { ...quiz, title: quiz.title + ' (copy)' };
-      quizId = null;
-    }
   } else {
     quiz = {
       title: '', description: '', timeLimitMin: 15,
@@ -278,7 +376,8 @@ async function renderBuilder(quizId) {
     </div>
     <div class="save-bar">
       <a class="btn" href="${quizId ? '#/quiz/' + quizId : '#/'}">Cancel</a>
-      <button class="btn primary" id="save">${quizId ? 'Save changes' : 'Create quiz'}</button>
+      <button class="btn primary" id="save">💾 Save</button>
+      <button class="btn ok" id="saveStart">▶ Save &amp; start</button>
     </div>`;
 
   function sw(key, title, sub) {
@@ -353,7 +452,9 @@ async function renderBuilder(quizId) {
     qs.lastElementChild.querySelector('textarea').focus();
   };
 
-  $('#save').onclick = async () => {
+  $('#save').onclick = () => saveQuiz(false);
+  $('#saveStart').onclick = () => saveQuiz(true);
+  async function saveQuiz(andStart) {
     const payload = {
       title: $('#title').value.trim(),
       description: $('#desc').value.trim(),
@@ -368,28 +469,24 @@ async function renderBuilder(quizId) {
       if (filled.length < 2) return toast(`Question ${i + 1} needs at least 2 answers.`);
       if (!filled.some((o) => o.id === q.correct)) return toast(`Question ${i + 1}: mark a correct answer that isn't empty.`);
     }
-    $('#save').disabled = true;
+    $('#save').disabled = $('#saveStart').disabled = true;
     try {
-      if (quizId) {
-        await hostApi('PUT', quizId, '', payload);
-        location.hash = '#/quiz/' + quizId;
-      } else {
-        const r = await api('POST', '/api/quizzes', payload);
-
-        location.hash = '#/quiz/' + r.id;
-      }
-      toast('Saved ✓');
+      if (quizId) await hostApi('PUT', quizId, '', payload);
+      else quizId = (await api('POST', '/api/quizzes', payload)).id;
+      toast('Saved ✓ — find it any time under My quizzes');
+      location.hash = '#/quiz/' + quizId;
+      if (andStart) startSession(quizId, payload.title);
     } catch (e) {
       toast(e.message, 'danger');
-      $('#save').disabled = false;
+      $('#save').disabled = $('#saveStart').disabled = false;
     }
-  };
+  }
 }
 
 // ================================================================ monitor
-async function renderMonitor(quizId) {
-  let quiz;
-  try { quiz = await hostApi('GET', quizId); } catch (e) {
+async function renderMonitor(runId) {
+  let quiz; // = the session (a snapshot of the saved quiz + code/status)
+  try { quiz = await api('GET', '/api/runs/' + runId); } catch (e) {
     view.innerHTML = `<div class="wrap"><div class="card empty"><div class="big">🤷</div><p>${esc(e.message)}</p><a class="btn" href="#/">Back</a></div></div>`;
     return;
   }
@@ -411,9 +508,10 @@ async function renderMonitor(quizId) {
 
   view.innerHTML = `
     <div class="wrap wide">
-      <div class="row" style="margin:8px 0 14px">
-        <div style="flex:1;min-width:0"><h1 style="margin:0">${esc(quiz.title)}</h1>
-          <div class="muted small">${quiz.questions.length} questions · ${quiz.timeLimitMin ? quiz.timeLimitMin + ' min' : 'no time limit'} · <span id="statusB">${statusBadge(quiz.status)}</span></div></div>
+      <a href="#/quiz/${quiz.quizId}" class="muted small" style="text-decoration:none">‹ ${esc(quiz.quizTitle)}</a>
+      <div class="row" style="margin:6px 0 14px">
+        <div style="flex:1;min-width:0"><h1 style="margin:0">${esc(quiz.title)}${quiz.label ? ` <span class="muted" style="font-weight:500">· ${esc(quiz.label)}</span>` : ''}</h1>
+          <div class="muted small">Started ${fmtDate(quiz.startedAt)} · ${quiz.questions.length} question${quiz.questions.length === 1 ? "" : "s"} · ${quiz.timeLimitMin ? quiz.timeLimitMin + ' min' : 'no time limit'} · <span id="statusB">${runBadge(quiz.status)}</span></div></div>
       </div>
       <div class="row" style="margin-bottom:14px" id="ctrl"></div>
 
@@ -448,13 +546,14 @@ async function renderMonitor(quizId) {
     </div>`;
 
   function renderControls() {
-    $('#statusB').innerHTML = statusBadge(quiz.status);
-    const c = $('#ctrl');
-    c.innerHTML = `
-      ${quiz.status !== 'open' ? `<button class="btn ok" data-st="open">▶ ${quiz.status === 'closed' ? 'Reopen' : 'Open quiz'}</button>` : '<button class="btn danger" data-st="closed">■ Close quiz</button>'}
-      <a class="btn" href="/api/quizzes/${quiz.id}/results.csv">⬇ Results CSV</a>
-      <a class="btn ghost" href="#/edit/${quiz.id}">✎ ${quiz.attemptCount || attempts.size ? 'Duplicate' : 'Edit'}</a>
-      <button class="btn ghost" id="delQuiz">🗑 Delete</button>`;
+    $('#statusB').innerHTML = runBadge(quiz.status);
+    $('.share').classList.toggle('ended', quiz.status !== 'open');
+    $('#ctrl').innerHTML = `
+      ${quiz.status === 'open'
+        ? '<button class="btn danger" data-st="closed">■ End session</button>'
+        : '<button class="btn" data-st="open">↺ Reopen</button>'}
+      <a class="btn" href="/api/runs/${quiz.id}/results.csv">⬇ Results CSV</a>
+      <button class="btn ghost" id="delRun">🗑 Delete session</button>`;
   }
   renderControls();
 
@@ -462,23 +561,22 @@ async function renderMonitor(quizId) {
     const st = e.target.closest('[data-st]')?.dataset.st;
     if (st) {
       if (st === 'closed') {
-        const r = await modal(`<h2>Close quiz?</h2><p class="muted">Everyone still writing (including frozen students) will be submitted automatically with their current answers.</p>
-          <div class="row end"><button class="btn" data-value="no">Cancel</button><button class="btn danger" data-value="yes">Close quiz</button></div>`);
+        const r = await modal(`<h2>End this session?</h2><p class="muted">No one new can join. Everyone still writing (including frozen students) is submitted automatically with their current answers. The quiz stays saved, so you can start it again any time.</p>
+          <div class="row end"><button class="btn" data-value="no">Cancel</button><button class="btn danger" data-value="yes">End session</button></div>`);
         if (r?.value !== 'yes') return;
       }
       try {
-        await hostApi('POST', quiz.id, '/status', { status: st });
+        await api('POST', `/api/runs/${quiz.id}/status`, { status: st });
         quiz.status = st;
         renderControls();
-        toast(st === 'open' ? 'Quiz is open — students can join' : 'Quiz closed');
+        toast(st === 'open' ? 'Session reopened, students can join with the same code' : 'Session ended');
       } catch (err) { toast(err.message, 'danger'); }
     }
-    if (e.target.closest('#delQuiz')) {
-      const r = await modal(`<h2>Delete this quiz?</h2><p class="muted">The quiz and all student results will be permanently deleted. This cannot be undone.</p>
-        <div class="row end"><button class="btn" data-value="no">Cancel</button><button class="btn danger" data-value="yes">Delete forever</button></div>`);
+    if (e.target.closest('#delRun')) {
+      const r = await modal(`<h2>Delete this session?</h2><p class="muted">This session's student results will be permanently deleted. The saved quiz is kept. This cannot be undone.</p>
+        <div class="row end"><button class="btn" data-value="no">Cancel</button><button class="btn danger" data-value="yes">Delete results</button></div>`);
       if (r?.value !== 'yes') return;
-      await hostApi('DELETE', quiz.id);
-      location.hash = '#/';
+      try { await api('DELETE', '/api/runs/' + quiz.id); toast('Session deleted'); location.hash = '#/quiz/' + quiz.quizId; } catch (err) { toast(err.message, 'danger'); }
     }
   });
 
@@ -509,7 +607,7 @@ async function renderMonitor(quizId) {
 
     const box = $('#students');
     if (!list.length) {
-      box.innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="big">${all.length ? '🔍' : '👋'}</div><p>${all.length ? 'No students match.' : quiz.status === 'open' ? 'Waiting for students to join…' : 'Open the quiz so students can join.'}</p></div>`;
+      box.innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="big">${all.length ? '🔍' : '👋'}</div><p>${all.length ? 'No students match.' : quiz.status === 'open' ? 'Waiting for students to join…' : 'This session has ended. No students joined.'}</p></div>`;
       return;
     }
     box.innerHTML = list.map(studentCard).join('');
@@ -597,12 +695,11 @@ async function renderMonitor(quizId) {
   }
 
   // ---- live connection
-  const socket = io({ auth: { role: 'host', quizId: quiz.id } });
+  const socket = io({ auth: { role: 'host', runId: quiz.id } });
   socket.on('attempts', (list) => { attempts.clear(); list.forEach((a) => attempts.set(a.id, a)); renderStudents(); });
   socket.on('attempt', (a) => {
     const first = !attempts.has(a.id);
     attempts.set(a.id, a);
-    if (first && quiz.status === 'open') { quiz.attemptCount = attempts.size; renderControls(); }
     renderStudents();
   });
   socket.on('removed', (id) => { attempts.delete(id); renderStudents(); });

@@ -77,14 +77,24 @@ Notes:
 **Lecturer**
 1. **New quiz**: add a title, instructions and a time limit, then multiple-choice questions with points. Tap the circle to mark the correct answer.
 2. Settings: shuffle questions, shuffle answers, lock to full screen, show score after submitting.
-3. **Open quiz** and share the code, link or QR code.
-4. The live monitor shows every student: writing / 🔒 frozen / submitted, progress, violations, timer and score. You get a toast, a beep and a vibration when someone freezes.
-5. For a frozen student:
+3. **Save** it. Saved quizzes stay under **My quizzes** for later use, and you can edit or duplicate them any time.
+4. Whenever you want to run it (today, next week, for several groups), press **▶ Start**. Each start creates a **session** with:
+   - its own join code, link and QR code
+   - its own students and results (the same student ID can take a new session)
+   - an optional name, e.g. "Group A"
+   - a copy of the questions as they were at start, so later edits never change a running or past session
+
+   **▶ Save & start** does both in one step.
+5. The quiz page lists **Live now** and **Past sessions** with dates, student counts and average score. Tap one to open it.
+6. The live monitor shows every student: writing / 🔒 frozen / submitted, progress, violations, timer and score. You get a toast, a beep and a vibration when someone freezes.
+7. For a frozen student:
    - **Continue**: they resume where they left off, and their answers are kept.
    - **Restart / options**: continue or start from the beginning, with optional *shuffle questions* and *shuffle answers*.
-6. ⋯ menu: activity log, force submit, remove a student (they can then rejoin).
-7. **Close quiz** auto-submits everyone still writing or frozen. **Results CSV** exports the marks.
-8. Log in on your phone to monitor and unlock students from there.
+8. ⋯ menu: activity log, force submit, remove a student (they can then rejoin).
+9. **End session** auto-submits everyone still writing or frozen, and the quiz stays saved for next time. **Reopen** lets the same code work again. **Results CSV** exports that session's marks.
+10. Log in on your phone to monitor and unlock students from there.
+
+Quizzes created before sessions existed are converted automatically on first start. Each quiz becomes a saved quiz, and its students and results move into a session with the same join code.
 
 **Student**: open the link, enter a name and student ID, then tap start. The quiz goes full screen, shows one question per screen with big tap targets, and has a question strip and a timer.
 

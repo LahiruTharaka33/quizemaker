@@ -30,7 +30,7 @@ function makeCode() {
   let code;
   do {
     code = Array.from({ length: 6 }, () => chars[crypto.randomInt(chars.length)]).join('');
-  } while (Object.values(db.quizzes).some((q) => q.code === code));
+  } while (Object.values(db.runs).some((r) => r.code === code));
   return code;
 }
 function shuffle(arr) {
@@ -74,7 +74,7 @@ function sanitizeQuiz(input) {
   };
 }
 
-const attemptsOf = (quizId) => Object.values(db.attempts).filter((a) => a.quizId === quizId);
+const attemptsOf = (runId) => Object.values(db.attempts).filter((a) => a.runId === runId);
 
 function buildOrder(quiz, shuffleQ, shuffleO) {
   const qs = shuffleQ ? shuffle(quiz.questions) : quiz.questions;
@@ -107,7 +107,7 @@ function grade(a, quiz) {
 
 // What the student is allowed to see (never the correct answers).
 function studentView(a) {
-  const quiz = db.quizzes[a.quizId];
+  const quiz = db.runs[a.runId];
   if (!quiz) return { status: 'gone' };
   const view = {
     status: a.status,
@@ -147,7 +147,7 @@ function studentView(a) {
 
 // What the lecturer sees for each student.
 function hostView(a) {
-  const quiz = db.quizzes[a.quizId];
+  const quiz = db.runs[a.runId];
   return {
     id: a.id,
     name: a.name,
@@ -171,7 +171,7 @@ function hostView(a) {
 // ---------------------------------------------------------------- state changes
 function push(a) {
   io.to('attempt:' + a.id).emit('state', studentView(a));
-  io.to('host:' + a.quizId).emit('attempt', hostView(a));
+  io.to('host:' + a.runId).emit('attempt', hostView(a));
   save();
 }
 
@@ -184,12 +184,12 @@ function freeze(a, type, detail) {
   a.frozenAt = now();
   a.violations.push({ type, detail: clean(detail, 200), at: now() });
   push(a);
-  io.to('host:' + a.quizId).emit('alert', { name: a.name, reason: type });
+  io.to('host:' + a.runId).emit('alert', { name: a.name, reason: type });
 }
 
 function submit(a, how = 'student') {
   if (a.status === 'submitted') return;
-  const quiz = db.quizzes[a.quizId];
+  const quiz = db.runs[a.runId];
   a.elapsedMs = elapsed(a);
   a.activeSince = null;
   a.status = 'submitted';
@@ -201,7 +201,7 @@ function submit(a, how = 'student') {
 
 function unfreeze(a, mode, opts = {}) {
   if (a.status !== 'frozen') return;
-  const quiz = db.quizzes[a.quizId];
+  const quiz = db.runs[a.runId];
   if (mode === 'restart') {
     const { order, optionOrder } = buildOrder(quiz, !!opts.shuffleQuestions, !!opts.shuffleOptions);
     a.order = order;
@@ -453,22 +453,60 @@ function hostAuth(req, res, next) {
     next();
   });
 }
+function runAuth(req, res, next) {
+  requireUser(req, res, () => {
+    const run = db.runs[req.params.id];
+    if (!run || run.ownerId !== req.user.id) return res.status(404).json({ error: 'Session not found' });
+    req.run = run;
+    next();
+  });
+}
+const runsOf = (quizId) => Object.values(db.runs).filter((r) => r.quizId === quizId);
+function runSummary(r) {
+  const atts = attemptsOf(r.id);
+  const done = atts.filter((a) => a.status === 'submitted' && a.maxScore);
+  return {
+    id: r.id, code: r.code, label: r.label, status: r.status, startedAt: r.startedAt, closedAt: r.closedAt,
+    studentCount: atts.length, submittedCount: done.length,
+    avgPct: done.length ? Math.round((done.reduce((s, a) => s + a.score / a.maxScore, 0) / done.length) * 100) : null,
+  };
+}
+function notifyRun(run) {
+  io.to('lobby:' + run.code).emit('quizStatus', run.status);
+  for (const a of attemptsOf(run.id)) io.to('attempt:' + a.id).emit('state', studentView(a));
+  save();
+}
+function closeRun(run) {
+  if (run.status === 'closed') return;
+  run.status = 'closed';
+  run.closedAt = now();
+  for (const a of attemptsOf(run.id)) if (a.status !== 'submitted') submit(a, 'closed');
+  notifyRun(run);
+}
 
-// Lecturer: list / create / read / update / delete
+// ---- Saved quizzes (reusable; editing never affects sessions already started)
 app.get('/api/quizzes', requireUser, (req, res) => {
   const list = Object.values(db.quizzes)
     .filter((q) => q.ownerId === req.user.id)
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .map((q) => ({ id: q.id, title: q.title, code: q.code, status: q.status, questionCount: q.questions.length, attemptCount: attemptsOf(q.id).length, createdAt: q.createdAt }));
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
+    .map((q) => {
+      const runs = runsOf(q.id);
+      return {
+        id: q.id, title: q.title, questionCount: q.questions.length, timeLimitMin: q.timeLimitMin,
+        createdAt: q.createdAt, updatedAt: q.updatedAt || q.createdAt,
+        runCount: runs.length,
+        lastRunAt: runs.reduce((m, r) => Math.max(m, r.startedAt), 0) || null,
+        live: runs.filter((r) => r.status === 'open').map((r) => ({ id: r.id, code: r.code, label: r.label })),
+      };
+    });
   res.json(list);
 });
 
 app.post('/api/quizzes', requireUser, (req, res) => {
-  const data = sanitizeQuiz(req.body || {});
-  const quiz = { id: id(9), code: makeCode(), ownerId: req.user.id, status: 'draft', createdAt: now(), ...data };
+  const quiz = { id: id(9), ownerId: req.user.id, createdAt: now(), updatedAt: now(), ...sanitizeQuiz(req.body || {}) };
   db.quizzes[quiz.id] = quiz;
   save();
-  res.json({ id: quiz.id, code: quiz.code });
+  res.json({ id: quiz.id });
 });
 
 // Quizzes made before accounts existed: claim them with the old per-quiz key kept in the browser
@@ -476,62 +514,110 @@ app.post('/api/quizzes/claim', requireUser, (req, res) => {
   let claimed = 0;
   for (const { id: qid, key } of Array.isArray(req.body?.items) ? req.body.items : []) {
     const q = db.quizzes[qid];
-    if (q && !q.ownerId && q.hostKey && key === q.hostKey) { q.ownerId = req.user.id; delete q.hostKey; claimed++; }
+    if (q && !q.ownerId && q.hostKey && key === q.hostKey) {
+      q.ownerId = req.user.id;
+      delete q.hostKey;
+      for (const r of runsOf(q.id)) r.ownerId = req.user.id;
+      claimed++;
+    }
   }
   if (claimed) save();
   res.json({ claimed });
 });
 
 app.get('/api/quizzes/:id', hostAuth, (req, res) => {
-  res.json({ ...req.quiz, attemptCount: attemptsOf(req.quiz.id).length });
+  const runs = runsOf(req.quiz.id).sort((a, b) => b.startedAt - a.startedAt).map(runSummary);
+  res.json({ ...req.quiz, runs });
 });
 
 app.put('/api/quizzes/:id', hostAuth, (req, res) => {
-  if (attemptsOf(req.quiz.id).length) {
-    return res.status(409).json({ error: 'Students have already joined this quiz, so it can no longer be edited. Duplicate it instead.' });
-  }
-  Object.assign(req.quiz, sanitizeQuiz(req.body || {}));
+  Object.assign(req.quiz, sanitizeQuiz(req.body || {}), { updatedAt: now() });
   save();
   res.json({ ok: true });
 });
 
-app.post('/api/quizzes/:id/status', hostAuth, (req, res) => {
-  const status = req.body?.status;
-  if (!['draft', 'open', 'closed'].includes(status)) return res.status(400).json({ error: 'Bad status' });
-  if (status === 'open' && !req.quiz.questions.length) return res.status(400).json({ error: 'Add at least one question first.' });
-  req.quiz.status = status;
-  if (status === 'closed') {
-    for (const a of attemptsOf(req.quiz.id)) if (a.status !== 'submitted') submit(a, 'closed');
-  }
-  io.to('quiz:' + req.quiz.code).emit('quizStatus', status);
-  for (const a of attemptsOf(req.quiz.id)) io.to('attempt:' + a.id).emit('state', studentView(a));
+app.post('/api/quizzes/:id/duplicate', hostAuth, (req, res) => {
+  const src = req.quiz;
+  const copy = { id: id(9), ownerId: req.user.id, createdAt: now(), updatedAt: now(), ...sanitizeQuiz({ ...src, title: src.title + ' (copy)' }) };
+  db.quizzes[copy.id] = copy;
   save();
-  res.json({ ok: true });
+  res.json({ id: copy.id });
 });
+
+// Permanently remove a session and its results; students still in it are sent out (not "submitted").
+function deleteRun(run) {
+  for (const a of attemptsOf(run.id)) {
+    io.to('attempt:' + a.id).emit('state', { status: 'removed' });
+    delete db.attempts[a.id];
+  }
+  io.to('lobby:' + run.code).emit('quizStatus', 'closed');
+  io.to('host:' + run.id).emit('runDeleted');
+  delete db.runs[run.id];
+}
 
 app.delete('/api/quizzes/:id', hostAuth, (req, res) => {
-  for (const a of attemptsOf(req.quiz.id)) delete db.attempts[a.id];
+  for (const r of runsOf(req.quiz.id)) deleteRun(r);
   delete db.quizzes[req.quiz.id];
   save();
   res.json({ ok: true });
 });
 
-app.get('/api/quizzes/:id/results.csv', hostAuth, (req, res) => {
+// ---- Sessions: "Start" a saved quiz -> new join code, its own students and results
+app.post('/api/quizzes/:id/runs', hostAuth, (req, res) => {
   const q = req.quiz;
+  if (!q.questions.length) return res.status(400).json({ error: 'Add at least one question before starting.' });
+  const { title, description, timeLimitMin, settings, questions } = q;
+  const run = {
+    id: id(9), quizId: q.id, ownerId: req.user.id, code: makeCode(), status: 'open',
+    label: clean(req.body?.label, 80), startedAt: now(), closedAt: null,
+    // snapshot, so later edits to the saved quiz don't change this session
+    ...structuredClone({ title, description, timeLimitMin, settings, questions }),
+  };
+  db.runs[run.id] = run;
+  save();
+  res.json({ id: run.id, code: run.code });
+});
+
+app.get('/api/runs/:id', runAuth, (req, res) => {
+  const quiz = db.quizzes[req.run.quizId];
+  res.json({ ...req.run, ...runSummary(req.run), quizTitle: quiz ? quiz.title : req.run.title });
+});
+
+app.post('/api/runs/:id/status', runAuth, (req, res) => {
+  const status = req.body?.status;
+  if (!['open', 'closed'].includes(status)) return res.status(400).json({ error: 'Bad status' });
+  if (status === 'closed') closeRun(req.run);
+  else if (req.run.status !== 'open') {
+    req.run.status = 'open';
+    req.run.closedAt = null;
+    notifyRun(req.run);
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/runs/:id', runAuth, (req, res) => {
+  deleteRun(req.run);
+  save();
+  res.json({ ok: true });
+});
+
+app.get('/api/runs/:id/results.csv', runAuth, (req, res) => {
+  const r = req.run;
   const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
   const rows = [['Name', 'Student ID', 'Status', 'Score', 'Max', 'Answered', 'Attempt #', 'Violations', 'Started', 'Submitted']];
-  for (const a of attemptsOf(q.id)) {
-    if (a.status === 'submitted') grade(a, q);
+  for (const a of attemptsOf(r.id)) {
+    if (a.status === 'submitted') grade(a, r);
     rows.push([
       a.name, a.studentId, a.status, a.score ?? '', a.maxScore ?? '', Object.keys(a.answers).length, a.attemptNo,
       a.violations.filter((v) => !v.system).map((v) => v.type).join('; '),
       a.startedAt ? new Date(a.startedAt).toISOString() : '', a.submittedAt ? new Date(a.submittedAt).toISOString() : '',
     ]);
   }
-  const fname = q.title.replace(/[^\w-]+/g, '_').slice(0, 50) || 'quiz';
+  const day = new Date(r.startedAt).toISOString().slice(0, 10);
+  const fname = ((r.title + (r.label ? '_' + r.label : '')).replace(/[^\w-]+/g, '_').slice(0, 60) || 'quiz') + '_' + day;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}_results.csv"`);
-  res.send('﻿' + rows.map((r) => r.map(esc).join(',')).join('\r\n'));
+  res.send('﻿' + rows.map((row) => row.map(esc).join(',')).join('\r\n'));
 });
 
 // LAN addresses, so a lecturer on localhost still gets a join link phones can open
@@ -553,8 +639,9 @@ app.get('/api/qr', async (req, res) => {
 });
 
 // Student: public quiz info and joining
+const runByCode = (code) => Object.values(db.runs).find((r) => r.code === String(code).toUpperCase());
 app.get('/api/join/:code', (req, res) => {
-  const quiz = Object.values(db.quizzes).find((q) => q.code === String(req.params.code).toUpperCase());
+  const quiz = runByCode(req.params.code);
   if (!quiz) return res.status(404).json({ error: 'No quiz with this code.' });
   res.json({
     title: quiz.title,
@@ -567,9 +654,9 @@ app.get('/api/join/:code', (req, res) => {
 });
 
 app.post('/api/join/:code', (req, res) => {
-  const quiz = Object.values(db.quizzes).find((q) => q.code === String(req.params.code).toUpperCase());
+  const quiz = runByCode(req.params.code);
   if (!quiz) return res.status(404).json({ error: 'No quiz with this code.' });
-  if (quiz.status !== 'open') return res.status(403).json({ error: quiz.status === 'closed' ? 'This quiz is closed.' : 'This quiz has not been opened yet.' });
+  if (quiz.status !== 'open') return res.status(403).json({ error: 'This quiz session has ended.' });
   const name = clean(req.body?.name, 80);
   const studentId = clean(req.body?.studentId, 40);
   if (!name || !studentId) return res.status(400).json({ error: 'Enter your name and student ID.' });
@@ -579,7 +666,7 @@ app.post('/api/join/:code', (req, res) => {
   }
   const { order, optionOrder } = buildOrder(quiz, quiz.settings.shuffleQuestions, quiz.settings.shuffleOptions);
   const a = {
-    id: id(9), token: id(24), quizId: quiz.id, name, studentId,
+    id: id(9), token: id(24), runId: quiz.id, name, studentId,
     status: 'active', order, optionOrder, answers: {}, current: 0,
     attemptNo: 1, violations: [], freezeReason: null,
     startedAt: now(), activeSince: now(), elapsedMs: 0, ua: clean(req.get('user-agent'), 300),
@@ -610,14 +697,14 @@ io.on('connection', (socket) => {
   // Lecturer monitor
   if (auth.role === 'host') {
     const user = userFromCookie(socket.handshake.headers.cookie);
-    const quiz = db.quizzes[auth.quizId];
+    const quiz = db.runs[auth.runId];
     if (!user || !quiz || quiz.ownerId !== user.id) return socket.disconnect(true);
     socket.join('host:' + quiz.id);
     socket.emit('attempts', attemptsOf(quiz.id).map(hostView));
 
     const own = (attemptId) => {
       const a = db.attempts[attemptId];
-      return a && a.quizId === quiz.id ? a : null;
+      return a && a.runId === quiz.id ? a : null;
     };
     socket.on('unfreeze', ({ attemptId, mode, shuffleQuestions, shuffleOptions } = {}) => {
       const a = own(attemptId);
@@ -640,7 +727,7 @@ io.on('connection', (socket) => {
 
   // Student waiting room (before joining) – live quiz status
   if (auth.role === 'lobby') {
-    socket.join('quiz:' + String(auth.code || '').toUpperCase());
+    socket.join('lobby:' + String(auth.code || '').toUpperCase());
     return;
   }
 
@@ -664,12 +751,12 @@ io.on('connection', (socket) => {
   const active = () => db.attempts[a.id] && a.status === 'active';
   socket.on('answer', ({ qid, oid } = {}) => {
     if (!active()) return;
-    const quiz = db.quizzes[a.quizId];
+    const quiz = db.runs[a.runId];
     const q = quiz.questions.find((x) => x.id === qid);
     if (!q) return;
     if (oid === null) delete a.answers[qid];
     else if (q.options.some((o) => o.id === oid)) a.answers[qid] = oid;
-    io.to('host:' + a.quizId).emit('attempt', hostView(a));
+    io.to('host:' + a.runId).emit('attempt', hostView(a));
     save();
   });
   socket.on('goto', (idx) => {
@@ -684,11 +771,38 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (!db.attempts[a.id]) return;
     a.online = io.sockets.adapter.rooms.get('attempt:' + a.id)?.size > 0;
-    io.to('host:' + a.quizId).emit('attempt', hostView(a));
+    io.to('host:' + a.runId).emit('attempt', hostView(a));
   });
 });
 
 // ---------------------------------------------------------------- start
+// Older data: each quiz had its own code/status and attempts pointed at the quiz.
+// Turn every quiz that was opened (or has students) into a past/live session, keep the quiz as a reusable template.
+function migrateToSessions() {
+  let moved = 0;
+  for (const q of Object.values(db.quizzes)) {
+    if (!('code' in q) && !('status' in q)) continue;
+    const atts = Object.values(db.attempts).filter((a) => a.quizId === q.id && !a.runId);
+    if (q.status === 'open' || q.status === 'closed' || atts.length) {
+      const startedAt = atts.reduce((m, a) => Math.min(m, a.startedAt || m), q.createdAt || now());
+      const { title, description, timeLimitMin, settings, questions } = q;
+      const run = {
+        id: id(9), quizId: q.id, ownerId: q.ownerId, code: q.code || makeCode(),
+        status: q.status === 'open' ? 'open' : 'closed', label: '',
+        startedAt, closedAt: q.status === 'open' ? null : now(),
+        ...structuredClone({ title, description, timeLimitMin, settings, questions }),
+      };
+      db.runs[run.id] = run;
+      for (const a of atts) { a.runId = run.id; delete a.quizId; }
+    }
+    delete q.code;
+    delete q.status;
+    q.updatedAt ||= q.createdAt;
+    moved++;
+  }
+  if (moved) { console.log('  Migrated ' + moved + ' quiz(zes) to the saved-quiz + sessions model'); save(); }
+}
+
 async function main() {
   try {
     storage = await openStorage({ databaseUrl: process.env.DATABASE_URL, dataFile: DATA_FILE, table: process.env.DB_TABLE || 'ql_records' });
@@ -697,12 +811,13 @@ async function main() {
     process.exit(1);
   }
   db = storage.db;
+  migrateToSessions();
 
   // Auto-submit when time runs out
   setInterval(() => {
     for (const a of Object.values(db.attempts)) {
       if (a.status !== 'active') continue;
-      const quiz = db.quizzes[a.quizId];
+      const quiz = db.runs[a.runId];
       if (quiz && quiz.timeLimitMin && remaining(a, quiz) <= 0) submit(a, 'time');
     }
   }, 1000);

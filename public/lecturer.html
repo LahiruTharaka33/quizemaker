@@ -10,6 +10,12 @@
     .quiz-item { display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit; }
     .quiz-item .meta { flex: 1; min-width: 0; }
     .quiz-item h3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0 0 4px; }
+    .quiz-item .btn { flex: none; }
+    .run-row { display: flex; align-items: center; gap: 10px; padding: 12px 4px; border-top: 1px solid var(--border); text-decoration: none; color: inherit; }
+    .run-row:first-of-type { border-top: 0; }
+    .run-row:hover { background: var(--surface-2); border-radius: 10px; }
+    .share.ended { opacity: .55; }
+    .share.ended::before { content: "Session ended. Reopen it to let students join again, or start a new session from the quiz page."; grid-column: 1 / -1; font-size: .85rem; color: var(--muted); font-weight: 600; }
 
     /* builder */
     .q-card { position: relative; }

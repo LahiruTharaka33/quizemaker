@@ -60,7 +60,7 @@ function updateJoinStatus() {
   const open = info.status === 'open';
   $('#jForm').classList.toggle('hidden', !open);
   $('#jWaiting').classList.toggle('hidden', open);
-  $('#jWaitingTxt').textContent = info.status === 'closed' ? 'This quiz is closed.' : 'Waiting for your lecturer to open the quiz…';
+  $('#jWaitingTxt').textContent = info.status === 'closed' ? 'This quiz session has ended.' : 'Waiting for your lecturer to open the quiz…';
 }
 
 $('#jForm').addEventListener('submit', async (e) => {

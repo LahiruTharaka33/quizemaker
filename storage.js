@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 
-const KINDS = ['quizzes', 'attempts', 'users', 'sessions', 'resets'];
+const KINDS = ['quizzes', 'runs', 'attempts', 'users', 'sessions', 'resets']; // runs = started sessions of a saved quiz
 const empty = () => Object.fromEntries(KINDS.map((k) => [k, {}]));
 function normalize(obj) {
   const db = obj && typeof obj === 'object' ? obj : {};
